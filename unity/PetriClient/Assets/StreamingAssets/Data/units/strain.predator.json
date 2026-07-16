@@ -1,7 +1,7 @@
 {
   "id": "strain.predator",
   "description": "The colony frontline brawler, engulfing enemies at close range. A balanced all-rounder.",
-  "maxHp": 360, "moveSpeedCenti": 200, "collisionRadiusCenti": 30, "turnSpeedCenti": 700,
+  "maxHp": 370, "moveSpeedCenti": 200, "collisionRadiusCenti": 30, "turnSpeedCenti": 700,
   "pushStrength": 2, "pushResistance": 2,
   "attackDamage": 8, "attackRangeCenti": 40, "acquireRangeCenti": 900, "attackCooldownTicks": 20,
   "foodCost": 33, "buildTimeTicks": 79,

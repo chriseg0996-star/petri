@@ -1,7 +1,7 @@
 {
   "id": "strain.cytolysin",
   "description": "Elite lytic hunter that bursts foes with concentrated enzymes. Heavy damage at a heavy price.",
-  "maxHp": 440, "moveSpeedCenti": 195, "collisionRadiusCenti": 30, "turnSpeedCenti": 650,
+  "maxHp": 450, "moveSpeedCenti": 195, "collisionRadiusCenti": 30, "turnSpeedCenti": 650,
   "pushStrength": 2, "pushResistance": 2,
   "attackDamage": 16, "attackRangeCenti": 45, "acquireRangeCenti": 900, "attackCooldownTicks": 22,
   "foodCost": 60, "buildTimeTicks": 90,

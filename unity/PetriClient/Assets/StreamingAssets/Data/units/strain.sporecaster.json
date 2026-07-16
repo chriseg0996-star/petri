@@ -1,7 +1,7 @@
 {
   "id": "strain.sporecaster",
   "description": "A budget spore-lobber firing weak but cheap ranged volleys.",
-  "maxHp": 180, "moveSpeedCenti": 190, "collisionRadiusCenti": 24, "turnSpeedCenti": 550,
+  "maxHp": 190, "moveSpeedCenti": 190, "collisionRadiusCenti": 24, "turnSpeedCenti": 550,
   "pushStrength": 1, "pushResistance": 1,
   "attackDamage": 5, "attackRangeCenti": 300, "acquireRangeCenti": 950, "attackCooldownTicks": 30, "projectileSpeedCenti": 1300,
   "foodCost": 30, "buildTimeTicks": 65,

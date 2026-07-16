@@ -1,7 +1,7 @@
 {
   "id": "strain.flagellate",
   "description": "Whip-tailed sprinter that flanks and harasses. Blazing speed, thin shell.",
-  "maxHp": 280, "moveSpeedCenti": 300, "collisionRadiusCenti": 26, "turnSpeedCenti": 1000,
+  "maxHp": 290, "moveSpeedCenti": 300, "collisionRadiusCenti": 26, "turnSpeedCenti": 1000,
   "pushStrength": 1, "pushResistance": 2,
   "attackDamage": 9, "attackRangeCenti": 40, "acquireRangeCenti": 950, "attackCooldownTicks": 18,
   "foodCost": 55, "buildTimeTicks": 80,
