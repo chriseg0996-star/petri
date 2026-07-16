@@ -1,0 +1,8 @@
+{
+  "id": "strain.sentinel-spire",
+  "description": "A watchtower grown from hardened biofilm. Stores nutrients and projects supply; upgrade it to stretch supplies, thicken its shell, and open fire on anything hostile in range.",
+  "maxHp": 400, "collisionRadiusCenti": 70,
+  "isHeadquarters": false, "providesSupply": true, "stockCapacity": 50, "startsBuilt": false,
+  "constructible": true, "foodCost": 60, "buildTimeTicks": 300,
+  "produces": []
+}

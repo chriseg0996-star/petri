@@ -1,0 +1,2 @@
+{ "id": "strain.up-capsule-armor", "foodCost": 150, "requiresBuilding": "strain.capsule-foundry",
+  "stat": "armor", "num": 4, "den": 5, "affects": ["strain.cyst", "strain.coccus"] }

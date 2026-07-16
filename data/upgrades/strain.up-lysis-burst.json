@@ -1,0 +1,2 @@
+{ "id": "strain.up-lysis-burst", "foodCost": 160, "requiresBuilding": "strain.lysis-chamber",
+  "stat": "attackSpeed", "num": 3, "den": 4, "affects": ["strain.cytolysin", "strain.lysin"] }

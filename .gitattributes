@@ -1,0 +1,21 @@
+# Normalize line endings
+* text=auto
+# Unity YAML smart merge (requires UnityYAMLMerge configured; harmless otherwise)
+*.unity merge=unityyamlmerge eol=lf
+*.prefab merge=unityyamlmerge eol=lf
+*.asset merge=unityyamlmerge eol=lf
+# Always LF for cross-platform tooling
+*.json text eol=lf
+*.yml text eol=lf
+*.asmdef text eol=lf
+# Binary
+*.png binary
+*.jpg binary
+*.fbx binary
+*.wav binary
+*.ogg binary
+*.ttf binary
+# NOTE: git-lfs patterns (textures/audio/models) get added when the first art lands.
+# Keep LFS for binary art/audio only — never for JSON data or code.
+unity/PetriClient/Assets/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+unity/PetriClient/Assets/**/*.png filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,2 @@
+{ "id": "strain.up-toxin-virulence", "foodCost": 160, "requiresBuilding": "strain.toxin-gland",
+  "stat": "damage", "num": 6, "den": 5, "affects": ["strain.toxinocyte", "strain.sporecaster"] }

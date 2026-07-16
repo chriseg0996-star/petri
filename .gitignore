@@ -1,0 +1,48 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]serSettings/
+/[Mm]emoryCaptures/
+*.csproj.user
+sysinfo.txt
+crashlytics-build.properties
+
+unity/PetriClient/Library/
+unity/PetriClient/Temp/
+unity/PetriClient/Obj/
+unity/PetriClient/Logs/
+unity/PetriClient/UserSettings/
+unity/PetriClient/Build/
+unity/PetriClient/Builds/
+unity/PetriClient/[Aa]ssets/AssetStoreTools*
+# Unity regenerates IDE project files at the client root; headless csprojs under src/ are committed.
+unity/PetriClient/*.csproj
+unity/PetriClient/*.sln
+
+# dotnet
+bin/
+obj/
+artifacts/
+*.binlog
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
+.agentbuild/
+
+# Unity editor crash-recovery scene backups (auto-generated, never source)
+unity/PetriClient/Assets/_Recovery/
+unity/PetriClient/Assets/_Recovery.meta
+
+out/

@@ -1,0 +1,10 @@
+{
+  "id": "strain.swarm-leader",
+  "description": "A coordinating cell that binds a squad into one body. A tough anchor commanding up to 30 units.",
+  "maxHp": 1120, "moveSpeedCenti": 210, "collisionRadiusCenti": 35, "turnSpeedCenti": 600,
+  "pushStrength": 2, "pushResistance": 3,
+  "attackDamage": 5, "attackRangeCenti": 60, "acquireRangeCenti": 700, "attackCooldownTicks": 25,
+  "foodCost": 70, "buildTimeTicks": 105,
+  "isLeader": true, "zone": "front",
+  "tankScore": 3, "damageScore": 2, "speedScore": 3, "rangeScore": 1, "supportScore": 4
+}

@@ -1,0 +1,2 @@
+{ "id": "strain.up-lysis-potency", "foodCost": 140, "requiresBuilding": "strain.lysis-chamber",
+  "stat": "damage", "num": 5, "den": 4, "affects": ["strain.cytolysin", "strain.lysin"] }

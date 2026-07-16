@@ -1,0 +1,2 @@
+{ "id": "strain.up-flagella-chemotaxis", "foodCost": 150, "requiresBuilding": "strain.flagella-bay",
+  "stat": "acquireRange", "num": 3, "den": 2, "affects": ["strain.flagellate", "strain.swimmer"] }

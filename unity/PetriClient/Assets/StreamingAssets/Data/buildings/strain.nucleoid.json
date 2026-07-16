@@ -1,0 +1,7 @@
+{
+  "id": "strain.nucleoid",
+  "description": "The colony core and control center. Drops off nutrients and buds new foragers. Lose it and the colony dies.",
+  "maxHp": 1500, "collisionRadiusCenti": 120,
+  "isHeadquarters": true, "providesSupply": true, "stockCapacity": 5000, "startsBuilt": true,
+  "produces": ["strain.forager"]
+}

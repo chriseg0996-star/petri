@@ -1,0 +1,2 @@
+{ "id": "strain.up-capsule-biofilm", "foodCost": 170, "requiresBuilding": "strain.capsule-foundry",
+  "stat": "armor", "num": 4, "den": 5, "affects": ["strain.cyst", "strain.coccus"] }

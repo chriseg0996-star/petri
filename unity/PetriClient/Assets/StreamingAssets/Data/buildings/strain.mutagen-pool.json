@@ -1,0 +1,9 @@
+{
+  "id": "strain.mutagen-pool",
+  "description": "A bubbling pool of mutagens that sharpens every cell in the colony. Bought only with evolutionary points harvested from the fallen. While it stands it grants +1 attack to ALL your units, and the effect stacks with each pool you hold. Raid it to blunt an enemy army.",
+  "maxHp": 500, "collisionRadiusCenti": 80,
+  "isHeadquarters": false, "startsBuilt": false,
+  "constructible": true, "foodCost": 0, "evoCost": 50, "buildTimeTicks": 400,
+  "attackBonus": 1,
+  "produces": []
+}

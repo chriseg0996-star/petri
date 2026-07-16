@@ -1,0 +1,8 @@
+{
+  "id": "strain.capsule-foundry",
+  "description": "Tank prong. Cultures cysts and cocci and unlocks their armor upgrades.",
+  "maxHp": 650, "collisionRadiusCenti": 90,
+  "isHeadquarters": false, "startsBuilt": false,
+  "constructible": false, "hubBuilt": true, "foodCost": 0, "mineralCost": 220, "buildTimeTicks": 480,
+  "produces": ["strain.cyst", "strain.coccus"]
+}

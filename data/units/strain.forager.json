@@ -1,0 +1,10 @@
+{
+  "id": "strain.forager",
+  "description": "A humble scavenger cell that gathers nutrients and grows the colony. Unarmed and fragile.",
+  "maxHp": 160, "moveSpeedCenti": 220, "collisionRadiusCenti": 25, "turnSpeedCenti": 900,
+  "pushStrength": 1, "pushResistance": 1,
+  "attackDamage": 0, "attackRangeCenti": 0, "acquireRangeCenti": 0, "attackCooldownTicks": 0,
+  "foodCost": 20, "buildTimeTicks": 53,
+  "isWorker": true, "zone": "rear", "carryCapacity": 10, "gatherTicks": 20,
+  "tankScore": 0, "damageScore": 0, "speedScore": 4, "rangeScore": 0, "supportScore": 6
+}

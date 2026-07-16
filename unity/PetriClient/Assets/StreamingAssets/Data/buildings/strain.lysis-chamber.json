@@ -1,0 +1,8 @@
+{
+  "id": "strain.lysis-chamber",
+  "description": "High-damage prong. Cultures cytolysins and lysins and unlocks their lytic upgrades.",
+  "maxHp": 550, "collisionRadiusCenti": 85,
+  "isHeadquarters": false, "startsBuilt": false,
+  "constructible": false, "hubBuilt": true, "foodCost": 0, "mineralCost": 200, "buildTimeTicks": 450,
+  "produces": ["strain.cytolysin", "strain.lysin"]
+}

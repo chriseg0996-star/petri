@@ -1,0 +1,10 @@
+{
+  "id": "strain.cyst",
+  "description": "A massively armored dormant shell that soaks punishment but hits softly.",
+  "maxHp": 1040, "moveSpeedCenti": 175, "collisionRadiusCenti": 34, "turnSpeedCenti": 500,
+  "pushStrength": 3, "pushResistance": 4,
+  "attackDamage": 6, "attackRangeCenti": 45, "acquireRangeCenti": 700, "attackCooldownTicks": 28,
+  "foodCost": 70, "buildTimeTicks": 105,
+  "isWorker": false, "zone": "front",
+  "tankScore": 6, "damageScore": 2, "speedScore": 1, "rangeScore": 1, "supportScore": 0
+}

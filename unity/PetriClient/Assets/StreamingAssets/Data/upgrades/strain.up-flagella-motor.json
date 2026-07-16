@@ -1,0 +1,2 @@
+{ "id": "strain.up-flagella-motor", "foodCost": 130, "requiresBuilding": "strain.flagella-bay",
+  "stat": "moveSpeed", "num": 13, "den": 10, "affects": ["strain.flagellate", "strain.swimmer"] }

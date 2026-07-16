@@ -1,0 +1,8 @@
+{
+  "id": "strain.incubator",
+  "description": "The main culture vat, growing predators, secretors, and swarm-leaders.",
+  "maxHp": 600, "collisionRadiusCenti": 90,
+  "isHeadquarters": false, "startsBuilt": false,
+  "constructible": true, "foodCost": 250, "buildTimeTicks": 600,
+  "produces": ["strain.predator", "strain.secretor", "strain.swarm-leader"]
+}

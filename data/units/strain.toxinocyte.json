@@ -1,0 +1,10 @@
+{
+  "id": "strain.toxinocyte",
+  "description": "Long-range toxin artillery with devastating reach and a delicate body.",
+  "maxHp": 240, "moveSpeedCenti": 185, "collisionRadiusCenti": 26, "turnSpeedCenti": 550,
+  "pushStrength": 1, "pushResistance": 1,
+  "attackDamage": 10, "attackRangeCenti": 450, "acquireRangeCenti": 1000, "attackCooldownTicks": 30, "projectileSpeedCenti": 1500,
+  "foodCost": 65, "buildTimeTicks": 95,
+  "isWorker": false, "zone": "rear",
+  "tankScore": 1, "damageScore": 4, "speedScore": 2, "rangeScore": 6, "supportScore": 0
+}

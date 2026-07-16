@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Petri.Core/Petri.Core.csproj" />
+    <Project Path="src/Petri.Runner/Petri.Runner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Petri.Tests/Petri.Tests.csproj" />
+  </Folder>
+</Solution>

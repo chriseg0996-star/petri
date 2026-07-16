@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The pure deterministic sim now lives under the Unity project's Assets/Sim so Unity's
+    Mono compiles it natively (shared-source: one codebase, two runtimes). This headless
+    project source-globs those SAME files and adds DefLoader (System.Text.Json), which is
+    headless-only because Unity does not ship System.Text.Json. Keep this project free of
+    ImplicitUsings/Nullable so the shared source compiles identically under Unity's C# 9.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="DefLoader.cs" />
+    <Compile Include="..\..\unity\PetriClient\Assets\Sim\**\*.cs" />
+  </ItemGroup>
+
+</Project>

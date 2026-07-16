@@ -1,0 +1,8 @@
+{
+  "id": "strain.toxin-gland",
+  "description": "Ranged prong. Cultures toxinocytes and sporecasters and unlocks their secretion upgrades.",
+  "maxHp": 500, "collisionRadiusCenti": 85,
+  "isHeadquarters": false, "startsBuilt": false,
+  "constructible": false, "hubBuilt": true, "foodCost": 0, "mineralCost": 220, "buildTimeTicks": 450,
+  "produces": ["strain.toxinocyte", "strain.sporecaster"]
+}

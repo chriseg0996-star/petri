@@ -1,0 +1,10 @@
+{
+  "id": "strain.swimmer",
+  "description": "The cheapest fast cell, bred by the dozen to swarm and harass.",
+  "maxHp": 160, "moveSpeedCenti": 320, "collisionRadiusCenti": 22, "turnSpeedCenti": 1100,
+  "pushStrength": 1, "pushResistance": 1,
+  "attackDamage": 5, "attackRangeCenti": 38, "acquireRangeCenti": 900, "attackCooldownTicks": 18,
+  "foodCost": 24, "buildTimeTicks": 50,
+  "isWorker": false, "zone": "front",
+  "tankScore": 0, "damageScore": 2, "speedScore": 6, "rangeScore": 1, "supportScore": 0
+}
