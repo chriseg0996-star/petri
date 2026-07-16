@@ -75,7 +75,9 @@ runtime, so authored C&C-style art drops in later by swapping them per def id.
   producing a strong+cheap specialist unit and gating 2 purchasable upgrades. Upgrades are
   per-player hashed state (`PlayerState.UpgradeLevels`) that fold a Num/Den into one integer
   floor at the relevant hot path (damage, armor, move, attack-speed, range).
-- **Unity client**: main menu (Skirmish/Settings live; Campaign/Multiplayer/Replay stubs),
+- **Unity client**: two-level main menu (Skirmish/Settings/Credits live; Multiplayer/Replays
+  are visible COMING SOON stubs) with a scaled 1280x720-reference layout and validated
+  skirmish setup,
   20 Hz fixed-tick driver with client-side game speed, pooled runtime sprites (diamonds =
   ranged, facing arrows), full command UI. The view is a pure projection of sim state.
 
