@@ -286,25 +286,15 @@ namespace Petri.Runner
                 {
                     if (w.Kind[e] != EntityKind.Unit || w.Owner[e] != p) continue;
                     var def = sim.Defs.Units[w.DefIndex[e]];
-                    if (def.IsWorker) continue;
-                    if (def.IsLeader)
+                    if (def.IsWorker || w.AttackMove[e]) continue;
+                    // Every combat unit attack-moves at the enemy HQ with a small
+                    // deterministic scatter so the scripted match exercises real fights.
+                    log.Add(new Command
                     {
-                        // Leaders drive their whole squad: formation-move at the enemy HQ,
-                        log.Add(new Command
-                        {
-                            Tick = tick, Player = p, Type = CommandType.FormationMove,
-                            A = e, B = hqX, C = hqY,
-                        });
-                    }
-                    else if (w.Leader[e] < 0 && !w.HasMoveOrder[e])
-                    {
-                        // Units without a swarm attack-move on their own.
-                        log.Add(new Command
-                        {
-                            Tick = tick, Player = p, Type = CommandType.Move,
-                            A = e, B = hqX + (e % 5 - 2) * 40, C = hqY + (e % 3 - 1) * 40,
-                        });
-                    }
+                        Tick = tick, Player = p,
+                        Type = def.AttackDamage > 0 ? CommandType.AttackMove : CommandType.Move,
+                        A = e, B = hqX + (e % 5 - 2) * 40, C = hqY + (e % 3 - 1) * 40,
+                    });
                 }
             }
         }

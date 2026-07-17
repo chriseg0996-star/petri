@@ -5,6 +5,5 @@
   "pushStrength": 2, "pushResistance": 2,
   "attackDamage": 16, "attackRangeCenti": 45, "acquireRangeCenti": 900, "attackCooldownTicks": 22,
   "foodCost": 60, "buildTimeTicks": 90,
-  "isWorker": false, "zone": "front",
-  "tankScore": 3, "damageScore": 6, "speedScore": 2, "rangeScore": 1, "supportScore": 0
+  "isWorker": false
 }

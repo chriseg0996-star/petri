@@ -10,29 +10,26 @@ namespace Petri.Tests
     {
         public static DefDatabase TinyDefs()
         {
-            // Join radius covers the whole 40u tiny map (diagonal ~57u), like the shipped data.
-            var rules = new Rules { MaxEntities = 1024, StartingFood = 150, StartingWorkers = 2, NodeRadiusCenti = 60, SwarmJoinRadiusCenti = 6000 };
+            var rules = new Rules { MaxEntities = 1024, StartingFood = 150, StartingWorkers = 2, NodeRadiusCenti = 60 };
             var units = new[]
             {
                 new UnitDef
                 {
                     Id = "test.leader", MaxHp = 100, MoveSpeedCenti = 210, CollisionRadiusCenti = 35,
                     PushStrength = 2, PushResistance = 3, FoodCost = 120, BuildTimeTicks = 150,
-                    IsLeader = true, TankScore = 3, SpeedScore = 3, SupportScore = 4,
+                    IsLeader = true,
                 },
                 new UnitDef
                 {
                     Id = "test.soldier", MaxHp = 60, MoveSpeedCenti = 200, CollisionRadiusCenti = 30,
                     PushStrength = 2, PushResistance = 2, AttackDamage = 5, AttackRangeCenti = 40,
                     AcquireRangeCenti = 800, AttackCooldownTicks = 20, FoodCost = 60, BuildTimeTicks = 100,
-                    TankScore = 5, DamageScore = 5, SpeedScore = 3,
                 },
                 new UnitDef
                 {
                     Id = "test.worker", MaxHp = 30, MoveSpeedCenti = 220, CollisionRadiusCenti = 25,
                     PushStrength = 1, PushResistance = 1, FoodCost = 40, BuildTimeTicks = 80,
                     IsWorker = true, CarryCapacity = 10, GatherTicks = 30,
-                    SpeedScore = 4, SupportScore = 6,
                 },
             };
             var buildings = new[]
@@ -339,31 +336,6 @@ namespace Petri.Tests
         }
 
         [Fact]
-        public void LeaderProductionStopsAtThePerPlayerCap()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            w.Players[0].Food = 5000; // money is no object — only the cap should block
-            // Player 0 already fields the cap (9) of leaders.
-            for (int k = 0; k < w.Rules.MaxLeadersPerPlayer; k++)
-                w.Spawn(EntityKind.Unit, 0, 0, new FixVec2(Fix.FromInt(10 + k), Fix.FromInt(10)), 100);
-
-            // A nursery pinned to leaders refuses to start a tenth...
-            int nursery = w.Spawn(EntityKind.Building, (short)sim.Defs.BuildingIndex("test.nursery"), 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(30)), 300);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetProduceOverride, A = nursery, B = 0 });
-            Assert.Equal(0, w.RejectedCommands);
-            for (int t = 0; t < 5; t++) sim.Tick();
-            Assert.Equal(-1, (int)w.ProduceChoice[nursery]); // idle at cap
-
-            // ...and resumes the moment a leader dies.
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == 0 && sim.Defs.Units[w.DefIndex[i]].IsLeader)
-                { w.Despawn(i); break; }
-            sim.Tick();
-            Assert.Equal(0, (int)w.ProduceChoice[nursery]); // building a leader again
-        }
-
-        [Fact]
         public void RallySendsProducedUnitsToThePoint()
         {
             var sim = TestWorlds.NewSim(42, new CommandLog());
@@ -420,7 +392,7 @@ namespace Petri.Tests
         {
             // N builders advance a site by N+2 work units per tick (actual time = 3T/(N+2)).
             var defs = TestWorlds.TinyDefs();
-            var w = new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+            var w = new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
             int nursery = defs.BuildingIndex("test.nursery");
             var bdef = defs.Buildings[nursery];
             int site = w.Spawn(EntityKind.Building, (short)nursery, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(10)), bdef.MaxHp);
@@ -497,7 +469,7 @@ namespace Petri.Tests
         private static SimWorld TwoUnits(DefDatabase defs, int players, short heavyDef, byte ownerA, short lightDef, byte ownerB, out int heavy, out int light)
         {
             var w = new SimWorld(defs.Rules, players, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
             heavy = w.Spawn(EntityKind.Unit, heavyDef, ownerA, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), defs.Units[heavyDef].MaxHp);
             light = w.Spawn(EntityKind.Unit, lightDef, ownerB, new FixVec2(Fix.Ratio(2040, 100), Fix.FromInt(20)), defs.Units[lightDef].MaxHp);
             return w;
@@ -546,7 +518,7 @@ namespace Petri.Tests
             var defs = TestWorlds.TinyDefs();
             short soldierDef = (short)defs.UnitIndex("test.soldier");
             var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
             int a = w.Spawn(EntityKind.Unit, soldierDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 60);
             int b = w.Spawn(EntityKind.Unit, soldierDef, 0, new FixVec2(Fix.Ratio(2040, 100), Fix.FromInt(20)), 60);
             var a0 = w.Pos[a]; var b0 = w.Pos[b];
@@ -565,7 +537,7 @@ namespace Petri.Tests
         {
             var defs = TestWorlds.TinyDefs();
             var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
             short sd = (short)defs.UnitIndex("test.soldier");
             int mut = defs.BuildingIndex("test.mutagen");
 
@@ -649,7 +621,7 @@ namespace Petri.Tests
         {
             var defs = TestWorlds.TinyDefs();
             var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
             short sd = (short)defs.UnitIndex("test.soldier");
             int cost = defs.Units[sd].FoodCost;              // 60
             int expected = cost * defs.Rules.KillBountyNum / defs.Rules.KillBountyDen; // 10% = 6
@@ -682,7 +654,7 @@ namespace Petri.Tests
         {
             var defs = TestWorlds.TinyDefs();
             var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
             short sd = (short)defs.UnitIndex("test.soldier");
             w.Spawn(EntityKind.Unit, sd, 0, new FixVec2(Fix.Ratio(2100, 100), Fix.FromInt(20)), 60);
             int bld = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.nursery"), 1,
@@ -721,14 +693,12 @@ namespace Petri.Tests
             int me = w.Spawn(EntityKind.Unit, sd, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 60);
             int ally = w.Spawn(EntityKind.Unit, sd, 1, new FixVec2(Fix.Ratio(2050, 100), Fix.FromInt(20)), 60);
             w.RebuildGrid(); // range queries read the grid; a tick would refresh it for us
-            Assert.False(CombatSystem.EnemyInAcquireRange(w, defs, me));
             int hpBefore = w.Hp[ally];
             for (int t = 0; t < 60; t++) CombatSystem.Tick(w, defs);
             Assert.Equal(hpBefore, w.Hp[ally]); // allies never trade fire
 
             int foe = w.Spawn(EntityKind.Unit, sd, 2, new FixVec2(Fix.Ratio(1950, 100), Fix.FromInt(20)), 60);
             w.RebuildGrid();
-            Assert.True(CombatSystem.EnemyInAcquireRange(w, defs, me));
             for (int t = 0; t < 60; t++) CombatSystem.Tick(w, defs);
             Assert.True(w.Hp[foe] < 60, "a rival team's unit should be attacked");
         }
@@ -845,7 +815,7 @@ namespace Petri.Tests
     public class CacheTierTests
     {
         private static SimWorld NewWorld(DefDatabase defs, int players = 1) =>
-            new SimWorld(defs.Rules, players, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+            new SimWorld(defs.Rules, players, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
 
         [Fact]
         public void UpgradeDoublesStockAndHpAndEscalatesCost()
@@ -931,7 +901,7 @@ namespace Petri.Tests
     {
         private static SimWorld NewWorld(DefDatabase defs) =>
             new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(60), Fix.FromInt(60), 1, defs.BuildDefaultZones());
+                Fix.FromInt(60), Fix.FromInt(60), 1);
 
         private static int FindBuilding(SimWorld w, byte owner, int def)
         {
@@ -1045,7 +1015,7 @@ namespace Petri.Tests
     {
         private static SimWorld NewWorld(DefDatabase defs, int players = 2) =>
             new SimWorld(defs.Rules, players, defs.Units.Length, defs.Upgrades.Length,
-                Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+                Fix.FromInt(40), Fix.FromInt(40), 1);
 
         // Spawn an operational nursery for the player so path upgrades can be bought.
         private static void GiveNursery(SimWorld w, DefDatabase defs, byte owner, int x, int y) =>
@@ -1137,7 +1107,7 @@ namespace Petri.Tests
     public class OrderQueueTests
     {
         private static SimWorld NewWorld(DefDatabase defs) =>
-            new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+            new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
 
         [Fact]
         public void QueuedMovesRunInSequence()
@@ -1236,18 +1206,13 @@ namespace Petri.Tests
         public void ReusedEntityIndexStartsFullyReset()
         {
             var defs = TestWorlds.TinyDefs();
-            var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1, defs.BuildDefaultZones());
+            var w = new SimWorld(defs.Rules, 2, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
             int e = w.Spawn(EntityKind.Unit, 1, 0, new FixVec2(Fix.FromInt(5), Fix.FromInt(5)), 30);
             w.Carry[e] = 7;
             w.GatherTimer[e] = 9;
             w.WorkNode[e] = 3;
             w.HasMoveOrder[e] = true;
             w.AttackMove[e] = true;
-            w.Leader[e] = 5;
-            w.Leaderless[e] = true;
-            w.Settled[e] = true;
-            w.SeekingSwarm[e] = true;
-            w.FacingHeld[e] = true;
             w.SupplyTicks[e] = 1;
             w.DepotStock[e] = 9;
             w.CaravanCache[e] = 4;
@@ -1267,11 +1232,6 @@ namespace Petri.Tests
             Assert.Equal(-1, w.WorkNode[e2]);
             Assert.False(w.HasMoveOrder[e2]);
             Assert.False(w.AttackMove[e2]);
-            Assert.Equal(-1, w.Leader[e2]);
-            Assert.False(w.Leaderless[e2]);
-            Assert.False(w.Settled[e2]);
-            Assert.False(w.SeekingSwarm[e2]);
-            Assert.False(w.FacingHeld[e2]);
             Assert.Equal(w.Rules.SupplyGraceTicks, w.SupplyTicks[e2]);
             Assert.Equal(0, w.DepotStock[e2]);
             Assert.Equal(-1, w.CaravanCache[e2]);
@@ -1285,49 +1245,9 @@ namespace Petri.Tests
         }
     }
 
-    public class SwarmTests
+    public class CombatOrderAndSupplyTests
     {
-        private const short LeaderDef = 0;  // TinyDefs sorted ids: test.leader, test.soldier, test.worker
-        private const short SoldierDef = 1;
-
-        [Fact]
-        public void LeaderDeathMakesSquadLeaderlessWithPenalties()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(22), Fix.FromInt(20)), 60);
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.Equal(lead, w.Leader[s]);
-
-            w.Despawn(lead);
-            sim.Tick();
-
-            Assert.True(w.Leaderless[s]);
-            Assert.Equal(-1, w.Leader[s]);
-            // -25% move speed and slower attacks, applied as single-floor rationals.
-            Assert.True(MovementSystem.StepFor(w, sim.Defs, s) < MovementSystem.PerTickStep(sim.Defs.Units[SoldierDef].MoveSpeedCenti));
-            Assert.Equal(26, CombatSystem.CooldownFor(w, sim.Defs, s)); // 20 * 4 / 3
-        }
-
-        [Fact]
-        public void LeaderlessUnitRejoinsNearestLeaderWithCapacity()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead1 = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead1 });
-            w.Despawn(lead1);
-            int lead2 = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(23), Fix.FromInt(20)), 100);
-
-            sim.Tick(); // within the 4-unit join radius: orphaned soldier joins immediately
-
-            Assert.Equal(lead2, w.Leader[s]);
-            Assert.False(w.Leaderless[s]);
-        }
+        private const short SoldierDef = 1; // TinyDefs sorted ids: test.leader, test.soldier, test.worker
 
         [Fact]
         public void AttackMoveAdvancesThenDivertsToEngage()
@@ -1407,82 +1327,6 @@ namespace Petri.Tests
         }
 
         [Fact]
-        public void FormationMoveHonorsExplicitFacing()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            // Move to the +x point but force the front to face +y (a drag-line front).
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = lead, B = 3000, C = 2000, D = 0, E = 0, F = 100 });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.Equal(Fix.Zero, w.Facing[lead].X);
-            Assert.Equal(Fix.One, w.Facing[lead].Y); // faces +y, not toward the +x destination
-        }
-
-        [Fact]
-        public void SquadMembersRejectDirectOrders()
-        {
-            // A squad acts as one body: Move/AttackMove/Stop on a member reject; the leader
-            // takes the orders. Leaving the squad (leader death) restores direct control.
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Move, A = s, B = 500, C = 500 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AttackMove, A = s, B = 500, C = 500 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Stop, A = s });
-            Assert.Equal(3, w.RejectedCommands);
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = lead, B = 500, C = 500, D = 0 });
-            Assert.Equal(3, w.RejectedCommands); // the leader still takes orders
-
-            w.Despawn(lead);
-            sim.Tick(); // member goes leaderless → individually commandable again
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.Move, A = s, B = 500, C = 500 });
-            Assert.Equal(3, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void SquadMembersDealBonusDamageLeaderlessDoNot()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
-            int bld = WorkerSystem.FindHq(w, sim.Defs, 1); // building target → flat directional factor
-
-            int baseDmg = sim.Defs.Units[SoldierDef].AttackDamage; // 5
-            Assert.Equal(baseDmg, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // loose: no bonus
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-            Assert.Equal(baseDmg * 5 / 4, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // in a squad: +25%
-
-            w.Despawn(lead);
-            sim.Tick(); // leader gone → squad goes leaderless
-            Assert.True(w.Leaderless[s]);
-            Assert.Equal(baseDmg, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // leaderless: back to base
-        }
-
-        [Fact]
-        public void CohesionGatesTheSquadDamageBonus()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
-            int bld = WorkerSystem.FindHq(w, sim.Defs, 1); // building target → flat directional factor
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-
-            int baseDmg = sim.Defs.Units[SoldierDef].AttackDamage;
-            Assert.Equal(baseDmg * 5 / 4, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // near the spine
-
-            w.Pos[s] = new FixVec2(Fix.FromInt(35), Fix.FromInt(20)); // 15u away >> 6u cohesion
-            Assert.Equal(baseDmg, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // scattered: no bonus
-        }
-
-        [Fact]
         public void FlankAndRearAttacksDealBonusDamage()
         {
             var sim = TestWorlds.NewSim(42, new CommandLog());
@@ -1509,439 +1353,6 @@ namespace Petri.Tests
             // Turning the victim to face the rear attacker flips it to a frontal hit.
             w.Facing[victim] = new FixVec2(-Fix.One, Fix.Zero);
             Assert.Equal(0, CombatSystem.ArcOf(w, victim, w.Pos[rear]));
-        }
-
-        [Fact]
-        public void LeadersLinkIntoALargerSwarm()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(26), Fix.FromInt(20)), 100);
-
-            // Link: limb joins the prime's swarm; cycle back is rejected.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.Equal(prime, w.Leader[limb]);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = prime, B = limb });
-            Assert.Equal(1, w.RejectedCommands); // cycle refused
-
-            // The limb inherits the prime's facing and holds a flanking station.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = prime, B = 2000, C = 3500, D = 0 });
-            sim.Tick();
-            Assert.Equal(w.Facing[prime], w.Facing[limb]);
-
-            // Prime death: the limb just unlinks — no leaderless penalty for commanders.
-            w.Despawn(prime);
-            sim.Tick();
-            Assert.Equal(-1, w.Leader[limb]);
-            Assert.False(w.Leaderless[limb]);
-
-            // Unlink command (B = -1) after re-linking works too.
-            int prime2 = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime2 });
-            Assert.Equal(prime2, w.Leader[limb]);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = -1 });
-            Assert.Equal(-1, w.Leader[limb]);
-        }
-
-        [Fact]
-        public void FreeformLimbStationOverridesDefaultAbreastStation()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(30), Fix.FromInt(30)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-
-            // Rearguard: 4 units straight behind the prime (prime faces +x by default).
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetLimbStation, A = limb, B = -400, C = 0 });
-            Assert.Equal(0, w.RejectedCommands);
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.True(w.HasMoveOrder[limb]);
-            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.FromInt(-4), Fix.Zero), w.MoveTarget[limb]);
-
-            // Unlinking clears the custom station; a station on an unlinked leader rejects.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = -1 });
-            Assert.False(w.HasLimbStation[limb]);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetLimbStation, A = limb, B = -400, C = 0 });
-            Assert.Equal(1, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void MembersRebalanceEvenlyAcrossLinkedSquads()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(26), Fix.FromInt(20)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-
-            // All six members pile onto the prime; the link should trickle them even (3/3).
-            for (int k = 0; k < 6; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21 + k % 3), Fix.FromInt(21 + k / 3)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = prime });
-            }
-            for (int t = 0; t < 6; t++) SwarmSystem.Tick(w, sim.Defs); // one transfer per tick
-
-            Assert.Equal(3, CountMembers(w, sim, prime));
-            Assert.Equal(3, CountMembers(w, sim, limb));
-
-            // Stable once balanced: no churn on further ticks.
-            for (int t = 0; t < 10; t++) SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(3, CountMembers(w, sim, prime));
-            Assert.Equal(3, CountMembers(w, sim, limb));
-        }
-
-        [Fact]
-        public void UnlinkedSquadsNeverTradeMembers()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int a = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int b = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(26), Fix.FromInt(20)), 100);
-            for (int k = 0; k < 4; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21 + k), Fix.FromInt(21)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = a });
-            }
-            for (int t = 0; t < 10; t++) SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(4, CountMembers(w, sim, a)); // separate swarms keep their rosters
-            Assert.Equal(0, CountMembers(w, sim, b));
-        }
-
-        private static int CountMembers(SimWorld w, Simulation sim, int lead)
-        {
-            int n = 0;
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !sim.Defs.Units[w.DefIndex[i]].IsLeader) n++;
-            return n;
-        }
-
-        [Fact]
-        public void MoveAsOnePacesTheSwarmToItsSlowestUnit()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(20)), 100); // 210
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(11), Fix.FromInt(20)), 60);    // 200
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-
-            // Default ON: the (faster) leader is capped to the soldier's pace.
-            SwarmSystem.Tick(w, sim.Defs);
-            long slow = MovementSystem.PerTickStep(200).Raw;
-            Assert.Equal(slow, w.ScratchStepCap[lead]);
-            Assert.Equal(slow, w.ScratchStepCap[s]);
-
-            // Toggled off: everyone travels at their own speed (no cap).
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetMoveAsOne, A = lead, B = 0 });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(0, w.ScratchStepCap[lead]);
-            Assert.Equal(0, w.ScratchStepCap[s]);
-
-            // Only leaders take the command.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetMoveAsOne, A = s, B = 1 });
-            Assert.Equal(1, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void AttackPostureReleasesMembersToFightOnContact()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(11), Fix.FromInt(21)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-            int enemy = w.Spawn(EntityKind.Unit, SoldierDef, 1, new FixVec2(Fix.FromInt(14), Fix.FromInt(21)), 60);
-
-            // Plain formation move: the member keeps formation despite the nearby enemy.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = lead, B = 3000, C = 2000, D = 0 });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.True(w.HasMoveOrder[s], "a plain move must keep the member in formation");
-
-            // Attack-move: the member is released on contact so combat can chase and fight.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AttackMove, A = lead, B = 3000, C = 2000 });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.False(w.HasMoveOrder[s], "attack posture must release the member to fight");
-
-            // And it actually fights: the enemy takes damage over the next ticks.
-            int hpBefore = w.Hp[enemy];
-            for (int t = 0; t < 100; t++) sim.Tick();
-            Assert.True(w.Hp[enemy] < hpBefore, "released member should engage the enemy");
-        }
-
-        [Fact]
-        public void AttackPostureFlowsDownSuperSwarmLinks()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(25)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AttackMove, A = prime, B = 3000, C = 2000 });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.True(w.AttackMove[limb], "the limb inherits the prime's attack posture");
-
-            // When the prime's attack ends, the posture clears down the tree too.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Stop, A = prime });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.False(w.AttackMove[limb]);
-        }
-
-        [Fact]
-        public void LimbsPathStraightToTheirDestinationStations()
-        {
-            // While the prime marches, limb stations anchor at the prime's DESTINATION, so a
-            // sub-swarm beelines to its final drawn spot instead of chasing the moving spine.
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(24)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetLimbStation, A = limb, B = 0, C = 300 });
-
-            // March the prime far east, facing +x (explicit facing): the limb's target must be
-            // the DESTINATION station (dest + side offset), not one near the prime's current pos.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = prime, B = 3400, C = 2000, D = 0, E = 100, F = 0 });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.True(w.HasMoveOrder[limb]);
-            // facing (1,0): station = dest + perp(0,1)*3 = (34, 23)
-            Assert.Equal(new FixVec2(Fix.FromInt(34), Fix.FromInt(23)), w.MoveTarget[limb]);
-        }
-
-        [Fact]
-        public void AutoAssimilateToggleControlsProducedUnitDestination()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int hq = WorkerSystem.FindHq(w, sim.Defs, 0);
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(8), Fix.FromInt(8)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetProduceOverride, A = hq, B = 1 }); // only soldiers
-
-            // Toggle OFF: the produced soldier stays loose despite an available leader.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetAutoAssimilate, A = hq, B = 0 });
-            Assert.False(w.AutoAssimilate[hq]);
-            int before = CommandTests.CountUnits(w, 0, 1);
-            for (int t = 0; t < 200 && CommandTests.CountUnits(w, 0, 1) == before; t++) sim.Tick();
-            int loose = -1;
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == 0 && w.DefIndex[i] == 1 && i != lead && w.Leader[i] < 0) loose = i;
-            Assert.True(loose >= 0, "with assimilation off, the new soldier must stay loose");
-
-            // Toggle back ON: the next soldier joins the leader's squad automatically.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.SetAutoAssimilate, A = hq, B = 1 });
-            before = CommandTests.CountUnits(w, 0, 1);
-            for (int t = 0; t < 200 && CommandTests.CountUnits(w, 0, 1) == before; t++) sim.Tick();
-            bool joined = false;
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == 0 && w.DefIndex[i] == 1 && w.Leader[i] == lead) joined = true;
-            Assert.True(joined, "with assimilation on, the new soldier must join the swarm");
-        }
-
-        [Fact]
-        public void ProducedUnitsKeepSeekingWhenAllLeadersAreFull()
-        {
-            // Regression: assignment used to happen ONLY at spawn — a unit produced while every
-            // leader was full stayed loose forever, even when a new leader appeared later.
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int hq = WorkerSystem.FindHq(w, sim.Defs, 0);
-            int lead1 = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(8), Fix.FromInt(8)), 100);
-            for (int k = 0; k < w.Rules.MaxUnitsPerLeader; k++) // fill the only leader to the cap
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(9 + k % 4), Fix.FromInt(9 + k / 4)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = lead1 });
-            }
-            Assert.Equal(0, w.RejectedCommands);
-
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetProduceOverride, A = hq, B = 1 });
-            int before = CommandTests.CountUnits(w, 0, 1);
-            for (int t = 0; t < 200 && CommandTests.CountUnits(w, 0, 1) == before; t++) sim.Tick();
-
-            int seeker = -1;
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == 0 && w.DefIndex[i] == 1 && w.Leader[i] < 0 && w.SeekingSwarm[i])
-                    seeker = i;
-            Assert.True(seeker >= 0, "unit produced while leaders were full must keep seeking a swarm");
-
-            // A new leader appears next to it → it joins on the next swarm tick.
-            int lead2 = w.Spawn(EntityKind.Unit, LeaderDef, 0, w.Pos[seeker] + new FixVec2(Fix.FromInt(1), Fix.Zero), 100);
-            sim.Tick();
-            Assert.Equal(lead2, w.Leader[seeker]);
-            Assert.False(w.SeekingSwarm[seeker]);
-        }
-
-        [Fact]
-        public void SeekersJoinLeadersAnywhereOnTheMap()
-        {
-            // The join radius is map-wide: a seeking unit assimilates into a swarm on the far
-            // side of the map and marches to its formation slot.
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(36), Fix.FromInt(36)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(4), Fix.FromInt(4)), 60);
-            w.SeekingSwarm[s] = true;
-            sim.Tick();
-            Assert.Equal(lead, w.Leader[s]);
-            Assert.False(w.SeekingSwarm[s]);
-            // ...and leaderless survivors likewise rejoin across the map — but keep the -25%
-            // penalty until they physically REACH their new leader (they're far away here).
-            int s2 = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(4), Fix.FromInt(8)), 60);
-            w.Leaderless[s2] = true;
-            sim.Tick();
-            Assert.Equal(lead, w.Leader[s2]);
-            Assert.True(w.Leaderless[s2], "penalty persists during the march to the new leader");
-        }
-
-        [Fact]
-        public void LinkedLimbsDoNotConsumeMemberCapacity()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int limb = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(25), Fix.FromInt(20)), 100);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-            for (int k = 0; k < w.Rules.MaxUnitsPerLeader - 1; k++) // 14 members + 1 limb
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(21)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = prime });
-            }
-            Assert.Equal(0, w.RejectedCommands);
-
-            // The capacity search must still offer the prime (14/15) — the limb is not a member.
-            int probe = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(19)), 60);
-            Assert.Equal(prime, SwarmSystem.NearestLeaderWithCapacityFresh(w, sim.Defs, probe));
-        }
-
-        [Fact]
-        public void MembersRestByAStandingLeaderAndWakeWhenItMoves()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(26), Fix.FromInt(20)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-
-            // The member walks in, touches the standing leader, and settles.
-            for (int t = 0; t < 300 && !w.Settled[s]; t++) sim.Tick();
-            Assert.True(w.Settled[s], "member should settle once it reaches the standing leader");
-            Assert.False(w.HasMoveOrder[s]);
-
-            // While settled it holds perfectly still — no jostling loop.
-            var rest = w.Pos[s];
-            for (int t = 0; t < 60; t++) sim.Tick();
-            Assert.Equal(rest, w.Pos[s]);
-
-            // The leader moving wakes the squad; it follows again.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.FormationMove, A = lead, B = 3200, C = 2000, D = 0 });
-            sim.Tick();
-            Assert.False(w.Settled[s]);
-            for (int t = 0; t < 40; t++) sim.Tick();
-            Assert.True(w.Pos[s].X > rest.X, "member should follow the moving leader");
-        }
-
-        [Fact]
-        public void EncircleAnchorsTheRingOnTheEnemy()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(14), Fix.FromInt(20)), 100);
-            for (int k = 0; k < 8; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(15), Fix.FromInt(21)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = lead });
-            }
-            int enemy = w.Spawn(EntityKind.Unit, SoldierDef, 1, new FixVec2(Fix.FromInt(24), Fix.FromInt(20)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetStance, A = lead, B = 1 });
-            Assert.True(w.Stance[lead]);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // Every slot hugs the ENEMY (ring radius 2u + rounding), and at least one lies
-            // BEYOND it — the squad wraps around the back, not just the near face.
-            int behind = 0;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (!MemberOf(w, sim, i, lead)) continue;
-                Assert.True(w.HasMoveOrder[i]);
-                float dx = (w.MoveTarget[i].X - w.Pos[enemy].X).Raw / (float)Fix.OneRaw;
-                float dy = (w.MoveTarget[i].Y - w.Pos[enemy].Y).Raw / (float)Fix.OneRaw;
-                Assert.True(dx * dx + dy * dy < 3.6f * 3.6f, "slots must surround the enemy");
-                if (w.MoveTarget[i].X > w.Pos[enemy].X) behind++;
-            }
-            Assert.True(behind > 0, "some slots must be on the enemy's far side");
-
-            // No enemy in range → the stance idles and the normal zone layout resumes.
-            w.Despawn(enemy);
-            SwarmSystem.Tick(w, sim.Defs);
-            bool nearLeader = false;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (!MemberOf(w, sim, i, lead) || !w.HasMoveOrder[i]) continue;
-                float dx = (w.MoveTarget[i].X - w.Pos[lead].X).Raw / (float)Fix.OneRaw;
-                float dy = (w.MoveTarget[i].Y - w.Pos[lead].Y).Raw / (float)Fix.OneRaw;
-                if (dx * dx + dy * dy < 3.6f * 3.6f) nearLeader = true;
-            }
-            Assert.True(nearLeader, "without a target the squad forms on the leader again");
-        }
-
-        private static bool MemberOf(SimWorld w, Simulation sim, int i, int lead) =>
-            w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !sim.Defs.Units[w.DefIndex[i]].IsLeader;
-
-        [Fact]
-        public void RingFormationSurroundsTheLeader()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            for (int k = 0; k < 8; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(30), Fix.FromInt(30)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = lead });
-            }
-            // The placement matrix sends soldiers to the Guard zone — a ring on the leader.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetUnitZone, A = lead, B = SoldierDef, C = SimConstants.ZoneGuard });
-            Assert.Equal(0, w.RejectedCommands);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // Slots must exist on every side of the leader — a shield, not a line.
-            int left = 0, right = 0, above = 0, below = 0;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || w.Leader[i] != lead) continue;
-                if (sim.Defs.Units[w.DefIndex[i]].IsLeader) continue;
-                Assert.True(w.HasMoveOrder[i]);
-                if (w.MoveTarget[i].X < w.Pos[lead].X) left++;
-                if (w.MoveTarget[i].X > w.Pos[lead].X) right++;
-                if (w.MoveTarget[i].Y < w.Pos[lead].Y) below++;
-                if (w.MoveTarget[i].Y > w.Pos[lead].Y) above++;
-            }
-            Assert.True(left > 0 && right > 0 && above > 0 && below > 0,
-                $"ring must surround: L{left} R{right} A{above} B{below}");
-        }
-
-        [Fact]
-        public void CommittedLeaderlessUnitsHoldTheFightUntilALeaderArrives()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            // A leaderless soldier locked in combat, with a distant leader that has room.
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 60);
-            int enemy = w.Spawn(EntityKind.Unit, SoldierDef, 1, new FixVec2(Fix.FromInt(20) + Fix.Ratio(1, 2), Fix.FromInt(20)), 600);
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(36), Fix.FromInt(36)), 100);
-            w.Leaderless[s] = true;
-
-            int hpBefore = w.Hp[enemy];
-            for (int t = 0; t < 60; t++) sim.Tick();
-            Assert.Equal(-1, w.Leader[s]);                       // not hijacked to the far leader
-            Assert.True(w.Pos[s].X < Fix.FromInt(24), "must not retreat away from its fight");
-            Assert.True(w.Hp[enemy] < hpBefore, "keeps attacking while leaderless");
-
-            // The leader marches INTO the fight → the survivor is absorbed on contact.
-            w.Pos[lead] = new FixVec2(Fix.FromInt(21), Fix.FromInt(21));
-            sim.Tick();
-            Assert.Equal(lead, w.Leader[s]);
         }
 
         [Fact]
@@ -2078,114 +1489,6 @@ namespace Petri.Tests
         }
 
         [Fact]
-        public void LeadersFaceTravelUnlessTheirFrontIsHeld()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-
-            // Plain move (no explicit facing): the leader turns toward its travel direction.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = lead, B = 2000, C = 3800 });
-            Assert.False(w.FacingHeld[lead]);
-            w.Facing[lead] = new FixVec2(Fix.One, Fix.Zero); // stale facing; travel is due +y
-            for (int t = 0; t < 40; t++) sim.Tick();
-            Assert.True(w.Facing[lead].Y > Fix.Ratio(9, 10), "free-facing leader should turn to its heading");
-
-            // Explicit front (drag-line E/F): held through the march.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.FormationMove, A = lead, B = 3600, C = 2000, E = 0, F = 100 });
-            Assert.True(w.FacingHeld[lead]);
-            for (int t = 0; t < 30; t++) sim.Tick();
-            Assert.Equal(Fix.One, w.Facing[lead].Y); // still facing +y while marching +x
-        }
-
-        [Fact]
-        public void SetFacingTurnsTheSelectionAndHoldsLeaderFronts()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-
-            // Face the squad due -x: the leader's front turns and is HELD, the squad wakes.
-            for (int t = 0; t < 200; t++) sim.Tick(); // settle first
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.SetFacing, A = lead, B = -100, C = 0 });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.Equal(-Fix.One, w.Facing[lead].X);
-            Assert.True(w.FacingHeld[lead]);
-            Assert.False(w.Settled[s]); // members wake to rotate onto the new front
-
-            // Members reject direct facing orders; a zero vector rejects too.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.SetFacing, A = s, B = 100, C = 0 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.SetFacing, A = lead, B = 0, C = 0 });
-            Assert.Equal(2, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void ZoneChangesReformARestingSquadImmediately()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            var members = new System.Collections.Generic.List<int>();
-            for (int k = 0; k < 4; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(24 + k), Fix.FromInt(20)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = lead });
-                members.Add(m);
-            }
-            // Let the squad form up and REST by its standing leader.
-            for (int t = 0; t < 300; t++) sim.Tick();
-            Assert.Contains(members, m => w.Settled[m]);
-
-            // Reassign soldiers Front → Guard: the squad must re-form NOW, not on the next march.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = sim.TickCount, Player = 0, Type = CommandType.SetUnitZone, A = lead, B = SoldierDef, C = SimConstants.ZoneGuard });
-            foreach (int m in members) Assert.False(w.Settled[m]);
-            sim.Tick();
-            Assert.Contains(members, m => w.HasMoveOrder[m]); // walking to the new ring slots
-        }
-
-        [Fact]
-        public void SpreadZoneInterleavesFrontAndRear()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            for (int k = 0; k < 6; k++)
-            {
-                int m = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(30), Fix.FromInt(30)), 60);
-                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = m, B = lead });
-            }
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetUnitZone, A = lead, B = SoldierDef, C = SimConstants.ZoneSpread });
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // Leader faces +x: spread members must split between slots ahead of and behind it.
-            int ahead = 0, behind = 0;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (!MemberOf(w, sim, i, lead)) continue;
-                if (w.MoveTarget[i].X > w.Pos[lead].X) ahead++;
-                if (w.MoveTarget[i].X < w.Pos[lead].X) behind++;
-            }
-            Assert.True(ahead > 0 && behind > 0, $"spread must interleave: ahead {ahead}, behind {behind}");
-        }
-
-        [Fact]
-        public void SquadBodyCentersOnItsLeader()
-        {
-            // A solo member's slot re-centers exactly onto the leader (the body wraps the
-            // spine), instead of standing a full band-offset in front of it.
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
-            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(25), Fix.FromInt(25)), 60);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = s, B = lead });
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.True(w.HasMoveOrder[s]);
-            Assert.Equal(w.Pos[lead], w.MoveTarget[s]);
-        }
-
-        [Fact]
         public void GenerationAdvancesOnSlotReuse()
         {
             var sim = TestWorlds.NewSim(42, new CommandLog());
@@ -2197,43 +1500,130 @@ namespace Petri.Tests
             Assert.Equal(e, e2);                       // same slot reused
             Assert.True(w.Generation[e2] > g0);        // but a newer generation → distinct identity
         }
+    }
+
+    /// <summary>Classic per-unit control and the leader's command aura: every unit obeys
+    /// direct orders, and friendly units within LeaderAuraRadius of a live same-owner
+    /// leader deal LeaderAuraBonus damage (derived scratch, recomputed each tick).</summary>
+    public class LeaderAuraTests
+    {
+        private const short LeaderDef = 0;  // TinyDefs sorted ids: test.leader, test.soldier, test.worker
+        private const short SoldierDef = 1;
 
         [Fact]
-        public void FormationMoveSetsOrderFacingAndFormation()
+        public void AuraGrantsDamageBonusWithinRadius()
         {
             var sim = TestWorlds.NewSim(42, new CommandLog());
             var w = sim.World;
             int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
+            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
+            int bld = WorkerSystem.FindHq(w, sim.Defs, 1); // building target → flat directional factor
+            int baseDmg = sim.Defs.Units[SoldierDef].AttackDamage; // 5
 
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.FormationMove, A = lead, B = 3000, C = 2000, D = 0 });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.True(w.HasMoveOrder[lead]);
-            Assert.Equal(Fix.One, w.Facing[lead].X); // moving due +x
-            Assert.Equal(Fix.Zero, w.Facing[lead].Y);
-
-            // Zone commands validate their inputs.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetUnitZone, A = lead, B = 99, C = SimConstants.ZoneFront });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetUnitZone, A = lead, B = SoldierDef, C = 99 });
-            Assert.Equal(2, w.RejectedCommands);
+            LeaderAuraSystem.Tick(w, sim.Defs);
+            Assert.True(w.ScratchLeaderAura[s]);
+            Assert.Equal(baseDmg * 5 / 4, CombatSystem.DamageOf(w, sim.Defs, s, bld)); // +25% in the aura
         }
 
         [Fact]
-        public void ProducedCombatUnitsAutoReinforceNearestLeader()
+        public void AuraRespectsRadiusOwnershipAndSelf()
         {
             var sim = TestWorlds.NewSim(42, new CommandLog());
             var w = sim.World;
-            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(8), Fix.FromInt(8)), 100);
+            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
+            int farOwn = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(35), Fix.FromInt(20)), 60);
+            int nearFoe = w.Spawn(EntityKind.Unit, SoldierDef, 1, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
+            int bld = WorkerSystem.FindHq(w, sim.Defs, 1);
+            int baseDmg = sim.Defs.Units[SoldierDef].AttackDamage;
 
-            for (int t = 0; t < 300; t++) sim.Tick(); // HQ produces a soldier in this window
+            LeaderAuraSystem.Tick(w, sim.Defs);
+            Assert.False(w.ScratchLeaderAura[farOwn]);  // 15u away >> 6u aura radius
+            Assert.False(w.ScratchLeaderAura[nearFoe]); // enemy leaders never buff you
+            Assert.False(w.ScratchLeaderAura[lead]);    // the leader never buffs itself
+            Assert.Equal(baseDmg, CombatSystem.DamageOf(w, sim.Defs, farOwn, bld));
+        }
 
-            bool found = false;
-            for (int i = 0; i < w.HighWater; i++)
+        [Fact]
+        public void AuraDropsWhenTheLeaderDies()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
+            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(21), Fix.FromInt(20)), 60);
+
+            LeaderAuraSystem.Tick(w, sim.Defs);
+            Assert.True(w.ScratchLeaderAura[s]);
+
+            w.Despawn(lead);
+            LeaderAuraSystem.Tick(w, sim.Defs); // derived scratch: recomputed from scratch
+            Assert.False(w.ScratchLeaderAura[s]);
+        }
+
+        [Fact]
+        public void EveryUnitObeysDirectOrders()
+        {
+            // Classic control: leaders and soldiers alike take Move/AttackMove/Stop/SetFacing.
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int lead = w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 100);
+            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(22), Fix.FromInt(20)), 60);
+
+            foreach (int e in new[] { lead, s })
             {
-                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != 0 || w.DefIndex[i] != SoldierDef) continue;
-                Assert.Equal(lead, w.Leader[i]);
-                found = true;
+                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Move, A = e, B = 3000, C = 3000 });
+                Assert.True(w.HasMoveOrder[e]);
+                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Stop, A = e });
+                Assert.False(w.HasMoveOrder[e]);
+                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetFacing, A = e, B = 0, C = 100 });
+                Assert.Equal(Fix.One, w.Facing[e].Y);
             }
-            Assert.True(found, "expected player 0 to produce at least one soldier in 300 ticks");
+            Assert.Equal(0, w.RejectedCommands);
+
+            // A zero facing vector still rejects.
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetFacing, A = s, B = 0, C = 0 });
+            Assert.Equal(1, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void ReservedSwarmCommandTypesReject()
+        {
+            // The removed swarm-era command ids must land in the default Reject and
+            // change nothing — old logs and stale peers may still emit them.
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 60);
+            ulong before = sim.StateHash();
+
+            int[] reserved = { 4, 5, 11, 12, 13, 14, 15, 23 };
+            foreach (int id in reserved)
+                CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = (CommandType)id, A = s, B = 1 });
+
+            Assert.Equal(reserved.Length, w.RejectedCommands);
+            w.RejectedCommands = 0; // the counter is hashed; restore it to compare the rest
+            Assert.Equal(before, sim.StateHash());
+        }
+
+        [Fact]
+        public void ProducedUnitsStayLooseAndFollowRally()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            // A leader stands nearby — with auto-assimilate gone it must NOT absorb anyone.
+            w.Spawn(EntityKind.Unit, LeaderDef, 0, new FixVec2(Fix.FromInt(8), Fix.FromInt(8)), 100);
+            int hq = WorkerSystem.FindHq(w, sim.Defs, 0);
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetProduceOverride, A = hq, B = SoldierDef });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetRally, A = hq, B = 3000, C = 600, D = 1 });
+
+            int soldier = -1;
+            for (int t = 0; t < 300 && soldier < 0; t++)
+            {
+                sim.Tick();
+                for (int i = 0; i < w.HighWater; i++)
+                    if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == 0 && w.DefIndex[i] == SoldierDef) { soldier = i; break; }
+            }
+            Assert.True(soldier >= 0, "expected a soldier within 300 ticks");
+            Assert.True(w.HasMoveOrder[soldier], "fresh unit walks to the rally point");
+            Assert.Equal(w.RallyPoint[hq], w.MoveTarget[soldier]);
         }
     }
 
@@ -2259,9 +1649,6 @@ namespace Petri.Tests
             var defs = DefLoader.Load(dataDir);
             Assert.True(defs.Units.Length >= 4);
             Assert.True(defs.Buildings.Length >= 2);
-            // Default zones parse from the unit JSONs (predator front, secretor rear).
-            Assert.Equal(SimConstants.ZoneFront, defs.Units[defs.UnitIndex("strain.predator")].DefaultZone);
-            Assert.Equal(SimConstants.ZoneRear, defs.Units[defs.UnitIndex("strain.secretor")].DefaultZone);
             Assert.NotEqual(0UL, defs.DefsHash);
 
             var map = DefLoader.LoadMap(dataDir, "petri-dish");
@@ -2277,235 +1664,4 @@ namespace Petri.Tests
         }
     }
 
-    /// <summary>The army hierarchy: sibling ordinals (battalion/squad numbers) that double
-    /// as left-to-right battle-line positions. Roots = battalions 1..N per player; limbs =
-    /// squads 2..N within a battalion (the prime is implicitly squad 1, leftmost).</summary>
-    public class HierarchyTests
-    {
-        private const short LeaderDef = 0;  // TinyDefs sorted ids: test.leader, test.soldier, test.worker
-        private const short SoldierDef = 1;
-
-        private static int SpawnLeader(SimWorld w, byte owner, int x, int y = 20) =>
-            w.Spawn(EntityKind.Unit, LeaderDef, owner, new FixVec2(Fix.FromInt(x), Fix.FromInt(y)), 100);
-
-        private static void Link(Simulation sim, int limb, int prime) =>
-            CommandSystem.Apply(sim.World, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
-
-        [Fact]
-        public void NewRootLeadersGetSequentialBattalionOrdinals()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int r1 = SpawnLeader(w, 0, 10);
-            int r2 = SpawnLeader(w, 0, 14);
-            int r3 = SpawnLeader(w, 0, 18);
-            int e1 = SpawnLeader(w, 1, 30); // the enemy numbers its own battalions from 1
-
-            SwarmSystem.Tick(w, sim.Defs);
-
-            Assert.Equal(1, (int)w.SiblingOrdinal[r1]);
-            Assert.Equal(2, (int)w.SiblingOrdinal[r2]);
-            Assert.Equal(3, (int)w.SiblingOrdinal[r3]);
-            Assert.Equal(1, (int)w.SiblingOrdinal[e1]);
-        }
-
-        [Fact]
-        public void NewLimbGetsNextSquadOrdinalFromTwo()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = SpawnLeader(w, 0, 20);
-            int l1 = SpawnLeader(w, 0, 24);
-            int l2 = SpawnLeader(w, 0, 28);
-            Link(sim, l1, prime);
-            Link(sim, l2, prime);
-
-            SwarmSystem.Tick(w, sim.Defs);
-
-            Assert.Equal(1, (int)w.SiblingOrdinal[prime]); // battalion 1 (its root scope)
-            Assert.Equal(2, (int)w.SiblingOrdinal[l1]);    // squads count from 2: the prime is 1
-            Assert.Equal(3, (int)w.SiblingOrdinal[l2]);
-        }
-
-        [Fact]
-        public void BattalionOrdinalsCompactOnDeath()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int r1 = SpawnLeader(w, 0, 10);
-            int r2 = SpawnLeader(w, 0, 14);
-            int r3 = SpawnLeader(w, 0, 18);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            w.Despawn(r2);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            Assert.Equal(1, (int)w.SiblingOrdinal[r1]); // relative order survives the gap
-            Assert.Equal(2, (int)w.SiblingOrdinal[r3]);
-        }
-
-        [Fact]
-        public void SquadOrdinalsCompactOnLimbDeath()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = SpawnLeader(w, 0, 20);
-            int l1 = SpawnLeader(w, 0, 24);
-            int l2 = SpawnLeader(w, 0, 28);
-            int l3 = SpawnLeader(w, 0, 32);
-            Link(sim, l1, prime);
-            Link(sim, l2, prime);
-            Link(sim, l3, prime);
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(4, (int)w.SiblingOrdinal[l3]);
-
-            w.Despawn(l2);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            Assert.Equal(2, (int)w.SiblingOrdinal[l1]);
-            Assert.Equal(3, (int)w.SiblingOrdinal[l3]);
-        }
-
-        [Fact]
-        public void RelinkAppendsAtEndOfNewSiblingSet()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int r1 = SpawnLeader(w, 0, 10);
-            int r2 = SpawnLeader(w, 0, 14);
-            int r3 = SpawnLeader(w, 0, 18);
-            int limb = SpawnLeader(w, 0, 22);
-            Link(sim, limb, r2); // battalion r2 already holds squad 2
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(3, (int)w.SiblingOrdinal[r3]);
-
-            Link(sim, r3, r2); // battalion 3 folds into battalion 2...
-            SwarmSystem.Tick(w, sim.Defs);
-
-            Assert.Equal(3, (int)w.SiblingOrdinal[r3]); // ...as its newest squad (after limb's 2)
-            Assert.Equal(1, (int)w.SiblingOrdinal[r1]); // remaining battalions renumber
-            Assert.Equal(2, (int)w.SiblingOrdinal[r2]);
-        }
-
-        [Fact]
-        public void LimbStationsRunLeftToRightByOrdinal()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = SpawnLeader(w, 0, 20); // spawns facing +x, so LEFT is +y
-            int l1 = SpawnLeader(w, 0, 26);
-            int l2 = SpawnLeader(w, 0, 30);
-            Link(sim, l1, prime);
-            Link(sim, l2, prime);
-
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // LinkSpacingCenti 500 = 5u: squad 2 one spacing right of the prime, squad 3 two.
-            Assert.True(w.HasMoveOrder[l1]);
-            Assert.True(w.HasMoveOrder[l2]);
-            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.Zero, Fix.FromInt(-5)), w.MoveTarget[l1]);
-            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.Zero, Fix.FromInt(-10)), w.MoveTarget[l2]);
-        }
-
-        [Fact]
-        public void FreeformLimbStationStillOverridesOrdinal()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = SpawnLeader(w, 0, 20);
-            int limb = SpawnLeader(w, 0, 26);
-            Link(sim, limb, prime);
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetLimbStation, A = limb, B = -400, C = 0 });
-
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // The drawn rearguard station wins over the ordinal's (0, -5) slot.
-            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.FromInt(-4), Fix.Zero), w.MoveTarget[limb]);
-        }
-
-        [Fact]
-        public void SetSiblingOrdinalSwaps()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int r1 = SpawnLeader(w, 0, 10);
-            int r2 = SpawnLeader(w, 0, 14);
-            int prime = SpawnLeader(w, 0, 20);
-            int limb = SpawnLeader(w, 0, 24);
-            int soldier = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(11), Fix.FromInt(20)), 60);
-            Link(sim, limb, prime);
-            SwarmSystem.Tick(w, sim.Defs);
-
-            // r1 and r2 trade battalion numbers.
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 2 });
-            Assert.Equal(0, w.RejectedCommands);
-            Assert.Equal(2, (int)w.SiblingOrdinal[r1]);
-            Assert.Equal(1, (int)w.SiblingOrdinal[r2]);
-
-            // The swap is the new stable order: the maintenance pass preserves it.
-            SwarmSystem.Tick(w, sim.Defs);
-            Assert.Equal(2, (int)w.SiblingOrdinal[r1]);
-            Assert.Equal(1, (int)w.SiblingOrdinal[r2]);
-
-            // Rejections: ordinal 0, own ordinal, unheld ordinal, non-leader, squad slot 1.
-            int rejected = w.RejectedCommands;
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 0 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 2 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 7 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = soldier, B = 1 });
-            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = limb, B = 1 });
-            Assert.Equal(rejected + 5, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void DeepLinksAndOversizeBattalionsReject()
-        {
-            var sim = TestWorlds.NewSim(42, new CommandLog());
-            var w = sim.World;
-            int prime = SpawnLeader(w, 0, 20);
-            int limb = SpawnLeader(w, 0, 24);
-            int extra = SpawnLeader(w, 0, 28);
-            int root = SpawnLeader(w, 0, 32);
-            Link(sim, limb, prime);
-            Assert.Equal(0, w.RejectedCommands);
-
-            // Depth cap: no linking under a limb, and no relinking a prime that has limbs.
-            Link(sim, extra, limb);
-            Assert.Equal(1, w.RejectedCommands);
-            Link(sim, prime, root);
-            Assert.Equal(2, w.RejectedCommands);
-
-            // Squad cap: a battalion holds at most MaxSquadsPerBattalion squads (prime included).
-            int cap = w.Rules.MaxSquadsPerBattalion; // 9 → prime + 8 limbs
-            for (int k = 2; k < cap; k++) Link(sim, SpawnLeader(w, 0, 10 + k), prime); // fills to 9 squads
-            Assert.Equal(2, w.RejectedCommands);
-            Link(sim, SpawnLeader(w, 0, 8), prime); // squad 10 refused
-            Assert.Equal(3, w.RejectedCommands);
-        }
-
-        [Fact]
-        public void OrdinalsAreHashedAndSlotReuseResets()
-        {
-            var simA = TestWorlds.NewSim(42, new CommandLog());
-            var simB = TestWorlds.NewSim(42, new CommandLog());
-            int a1 = SpawnLeader(simA.World, 0, 10), b1 = SpawnLeader(simB.World, 0, 10);
-            int a2 = SpawnLeader(simA.World, 0, 14), b2 = SpawnLeader(simB.World, 0, 14);
-            simA.Tick();
-            simB.Tick();
-            Assert.Equal(simA.StateHash(), simB.StateHash());
-
-            // Swapping battalion numbers on one sim alone diverges the fingerprint:
-            // ordinals are real hashed state, not client-side labels.
-            CommandSystem.Apply(simA.World, simA.Defs, new Command { Tick = 1, Player = 0, Type = CommandType.SetSiblingOrdinal, A = a1, B = 2 });
-            Assert.NotEqual(simA.StateHash(), simB.StateHash());
-
-            // Slot reuse: a freed leader slot hands no stale ordinal to its next occupant.
-            var w = simB.World;
-            Assert.Equal(1, (int)w.SiblingOrdinal[b1]);
-            w.Despawn(b1);
-            int reused = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(12), Fix.FromInt(20)), 60);
-            Assert.Equal(b1, reused);
-            Assert.Equal(0, (int)w.SiblingOrdinal[reused]);
-        }
-    }
 }

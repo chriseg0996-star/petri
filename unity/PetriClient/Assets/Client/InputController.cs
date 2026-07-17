@@ -40,8 +40,6 @@ namespace Petri.Client
         private float _lastClickTime = -10f;
         private int _lastClickDef = -1;
         private readonly List<int> _lineUnits = new List<int>();
-        private readonly List<Vector2> _slotPos = new List<Vector2>();
-        private readonly List<Vector2> _slotFront = new List<Vector2>();
         private readonly List<Vector2> _rightPath = new List<Vector2>();  // screen-space drawn curve
         private readonly List<Vector2> _worldPath = new List<Vector2>();  // world-space, built on release
         private readonly List<float> _cum = new List<float>();            // cumulative arc-length
@@ -49,21 +47,9 @@ namespace Petri.Client
         /// <summary>The screen-space curve being drawn with a right-drag (for the HUD preview).</summary>
         public IReadOnlyList<Vector2> RightPathScreen => _rightPath;
 
-        // Control groups 2..9 store (slot, generation) so recall survives entity-index reuse:
-        // a dead unit's slot taken by a new one won't be wrongly re-selected. Key 1 is the
-        // ARMY key — it drills the hierarchy instead of recalling a group: 1 = all military,
-        // then digit n = nth battalion (left-to-right), then digit m = mth squad of it.
+        // Control groups 1..9 store (slot, generation) so recall survives entity-index reuse:
+        // a dead unit's slot taken by a new one won't be wrongly re-selected.
         private readonly List<(int idx, int gen)>[] _groups = new List<(int, int)>[10];
-        // Digit-drill state: 0 = idle, 1 = army selected (next digit picks a battalion),
-        // 2 = battalion selected (next digit picks a squad). A chord expires after a beat;
-        // any other key or click commits the selection at its current level.
-        private const float DrillChordSeconds = 0.4f;
-        private int _drillLevel;
-        private int _drillRoot = -1;
-        private float _drillDeadline;
-        private readonly List<int> _tmpLeaders = new List<int>();
-        private readonly List<int> _tmpCount = new List<int>();
-        private readonly List<int> _tmpRoots = new List<int>();
 
         public void Bind(MatchBootstrap match, Camera cam)
         {
@@ -72,13 +58,12 @@ namespace Petri.Client
             for (int n = 1; n <= 9; n++) _groups[n] = new List<(int, int)>();
         }
 
-        public bool GroupPopulated(int n) => n >= 2 && n <= 9 && _groups[n].Count > 0;
+        public bool GroupPopulated(int n) => n >= 1 && n <= 9 && _groups[n].Count > 0;
 
-        /// <summary>Save the current selection (own units/buildings) as control group N
-        /// (2..9 — slot 1 belongs to the army hierarchy).</summary>
+        /// <summary>Save the current selection (own units/buildings) as control group N.</summary>
         public void AssignControlGroup(int n)
         {
-            if (n < 2 || n > 9) return;
+            if (n < 1 || n > 9) return;
             var w = _match.Sim.World;
             var g = _groups[n];
             g.Clear();
@@ -94,7 +79,7 @@ namespace Petri.Client
         /// <summary>Recall control group N; only members still alive with a matching generation.</summary>
         public void SelectControlGroup(int n, bool add)
         {
-            if (n < 2 || n > 9) return;
+            if (n < 1 || n > 9) return;
             var w = _match.Sim.World;
             if (!add) Selected.Clear();
             AttackArmed = false;
@@ -104,76 +89,6 @@ namespace Petri.Client
                     && w.Owner[m.idx] == MatchBootstrap.HumanPlayer
                     && (w.Kind[m.idx] == EntityKind.Unit || w.Kind[m.idx] == EntityKind.Building))
                     Selected.Add(m.idx);
-            ExpandSelectionToSquads(w); // pick up units that reinforced the squad since assignment
-        }
-
-        /// <summary>
-        /// Squads (and linked super-swarms) are atomic: if the selection touches any member,
-        /// limb, or leader, the entire body joins the selection — up the tree to the prime and
-        /// back down through every linked squad. Iterates to a fixpoint (the tree is shallow).
-        /// </summary>
-        private void ExpandSelectionToSquads(SimWorld w)
-        {
-            if (Selected.Count == 0) return;
-            int before;
-            do
-            {
-                before = Selected.Count;
-                _scratch.Clear();
-                foreach (int e in Selected)
-                    if (w.Kind[e] == EntityKind.Unit && w.Leader[e] >= 0)
-                        _scratch.Add(w.Leader[e]);           // up: member/limb → its leader/prime
-                foreach (int lead in _scratch) Selected.Add(lead);
-                for (int i = 0; i < w.HighWater; i++)        // down: leader → members and limbs
-                    if (w.Kind[i] == EntityKind.Unit && w.Leader[i] >= 0 && Selected.Contains(w.Leader[i]))
-                        Selected.Add(i);
-            } while (Selected.Count != before);
-        }
-
-        /// <summary>
-        /// Assimilate the selected combat units into swarms: assign each to a leader, balancing
-        /// squad sizes and respecting the per-leader cap. Uses the selected leaders if any, else
-        /// the player's existing leaders. The sim revalidates every assignment.
-        /// </summary>
-        public void AssimilateSelected()
-        {
-            var w = _match.Sim.World;
-            _tmpLeaders.Clear();
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && _match.Defs.Units[w.DefIndex[e]].IsLeader) _tmpLeaders.Add(e);
-            if (_tmpLeaders.Count == 0)
-                for (int i = 0; i < w.HighWater; i++)
-                    if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == MatchBootstrap.HumanPlayer && _match.Defs.Units[w.DefIndex[i]].IsLeader)
-                        _tmpLeaders.Add(i);
-            if (_tmpLeaders.Count == 0) return; // no leaders to assimilate onto
-
-            // Current squad sizes for each candidate leader (members only; limbs don't count).
-            _tmpCount.Clear();
-            for (int li = 0; li < _tmpLeaders.Count; li++)
-            {
-                int c = 0;
-                for (int i = 0; i < w.HighWater; i++)
-                    if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == _tmpLeaders[li]
-                        && !_match.Defs.Units[w.DefIndex[i]].IsLeader) c++;
-                _tmpCount.Add(c);
-            }
-
-            int cap = w.Rules.MaxUnitsPerLeader;
-            for (int i = 0; i < w.HighWater; i++) // index order for a deterministic fill
-            {
-                if (!Selected.Contains(i)) continue;
-                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
-                var def = _match.Defs.Units[w.DefIndex[i]];
-                if (def.IsWorker || def.IsLeader || w.Leader[i] >= 0) continue; // already in a squad, or ineligible
-
-                int best = -1;
-                for (int li = 0; li < _tmpLeaders.Count; li++)
-                    if (_tmpCount[li] < cap && (best < 0 || _tmpCount[li] < _tmpCount[best])) best = li;
-                if (best < 0) break; // every squad full
-
-                _match.Enqueue(new Command { Type = CommandType.AssignToLeader, A = i, B = _tmpLeaders[best] });
-                _tmpCount[best]++;
-            }
         }
 
         private void Update()
@@ -248,7 +163,6 @@ namespace Petri.Client
                     SelectNearest(w);
                 else
                     SelectBox(w);
-                ExpandSelectionToSquads(w); // touching any squad member selects the whole squad
             }
 
             // ---- Shift+Right drag: aim a facing — on release everything selected turns to it.
@@ -303,8 +217,8 @@ namespace Petri.Client
             }
         }
 
-        /// <summary>Turn every selected leader and loose unit to face along the dragged arrow
-        /// (world-space direction). Squad members are excluded — their leader's front rules.
+        /// <summary>Turn every selected unit to face along the dragged arrow (world-space
+        /// direction). The facing holds while a unit stands idle.
         /// Returns false when the drag was too short to read a direction (a plain shift-click).</summary>
         private bool IssueFacing(SimWorld w)
         {
@@ -317,7 +231,7 @@ namespace Petri.Client
             bool any = false;
             foreach (int e in Selected)
             {
-                if (w.Kind[e] != EntityKind.Unit || w.Leader[e] >= 0) continue;
+                if (w.Kind[e] != EntityKind.Unit) continue;
                 _match.Enqueue(new Command { Type = CommandType.SetFacing, A = e, B = cx, C = cy });
                 any = true;
             }
@@ -336,32 +250,17 @@ namespace Petri.Client
         {
             var w = _match.Sim.World;
 
-            // Digit keys are GLOBAL and take priority. [1] is the ARMY key — a hierarchical
-            // drill numbered left-to-right like the battle line: 1 selects all military,
-            // 1,n the nth battalion, 1,n,m the mth squad of it (m = 1 is the prime's own).
-            // [2-9] stay classic manual groups: Ctrl+N assigns, N recalls, Shift+N adds.
-            // Ctrl+1 is reserved (the army is not assignable).
+            // Control groups on 1..9 are GLOBAL and take priority: Ctrl+N assigns the current
+            // selection, N recalls it (Shift+N adds to the current selection).
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-            if (_drillLevel > 0 && Time.unscaledTime > _drillDeadline) CancelDrill();
             for (int n = 1; n <= 9; n++)
             {
                 if (!Input.GetKeyDown(KeyCode.Alpha0 + n)) continue;
-                if (ctrl) { AssignControlGroup(n); CancelDrill(); return; }
-                if (_drillLevel == 1) { DrillToBattalion(n); return; }
-                if (_drillLevel == 2) { DrillToSquad(n); return; }
-                if (n == 1)
-                {
-                    SelectAllMilitary();
-                    _drillLevel = 1;
-                    _drillDeadline = Time.unscaledTime + DrillChordSeconds;
-                }
+                if (ctrl) AssignControlGroup(n);
                 else SelectControlGroup(n, shift);
                 return;
             }
-
-            // Any other key or click commits the drill at its current selection level.
-            if (_drillLevel > 0 && Input.anyKeyDown) CancelDrill();
 
             // Space selects all your military (non-worker) units map-wide.
             if (Input.GetKeyDown(KeyCode.Space)) { SelectAllMilitary(); return; }
@@ -370,7 +269,6 @@ namespace Petri.Client
             if (primary >= 0 && w.Kind[primary] == EntityKind.Building)
             {
                 if (Input.GetKeyDown(KeyCode.P)) ToggleProducePaused(primary);
-                if (Input.GetKeyDown(KeyCode.T)) ToggleAutoAssimilate(primary);
                 if (Input.GetKeyDown(KeyCode.R)) ClearRally();
                 if (Input.GetKeyDown(KeyCode.U)) UpgradeCache(primary);
                 return;
@@ -385,125 +283,11 @@ namespace Petri.Client
             }
 
             if (Input.GetKeyDown(KeyCode.A) && HasArmedSelected(w)) AttackArmed = true; // attack-move
-            if (Input.GetKeyDown(KeyCode.G)) AssimilateSelected();                       // group into swarms
-            if (Input.GetKeyDown(KeyCode.L)) LinkSelected();                             // link squads into a super-swarm
-            if (Input.GetKeyDown(KeyCode.U)) UnlinkSelected();                           // break links
-            if (Input.GetKeyDown(KeyCode.E)) ToggleEncircle();                           // encircle stance
-            if (Input.GetKeyDown(KeyCode.O)) ToggleMoveAsOne();                          // arrive-as-one pacing
             if (Input.GetKeyDown(KeyCode.S)) StopSelected();
         }
 
-        /// <summary>Set a unit type's formation zone on every selected leader (the placement
-        /// matrix: front/rear/flanks/spread/guard).</summary>
-        public void SetUnitZone(int unitDefIx, int zone)
-        {
-            var w = _match.Sim.World;
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && _match.Defs.Units[w.DefIndex[e]].IsLeader)
-                    _match.Enqueue(new Command { Type = CommandType.SetUnitZone, A = e, B = unitDefIx, C = zone });
-        }
-
-        /// <summary>Flip Encircle stance on every selected leader (following the primary):
-        /// the squad wraps the nearest enemy instead of holding its formation shape.</summary>
-        public void ToggleEncircle()
-        {
-            var w = _match.Sim.World;
-            int primary = PrimarySelected();
-            if (primary < 0 || w.Kind[primary] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[primary]].IsLeader) return;
-            bool on = !w.Stance[primary];
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && _match.Defs.Units[w.DefIndex[e]].IsLeader)
-                    _match.Enqueue(new Command { Type = CommandType.SetStance, A = e, B = on ? 1 : 0 });
-        }
-
-        /// <summary>Flip arrive-as-one pacing on every selected leader (following the primary).</summary>
-        public void ToggleMoveAsOne()
-        {
-            var w = _match.Sim.World;
-            int primary = PrimarySelected();
-            if (primary < 0 || w.Kind[primary] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[primary]].IsLeader) return;
-            bool on = !w.MoveAsOne[primary];
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && _match.Defs.Units[w.DefIndex[e]].IsLeader)
-                    _match.Enqueue(new Command { Type = CommandType.SetMoveAsOne, A = e, B = on ? 1 : 0 });
-        }
-
-        /// <summary>Select exactly one squad — its leader plus direct members — WITHOUT the
-        /// usual whole-swarm expansion. This is how the swarm-link hierarchy grid drills into
-        /// an individual squad of a linked swarm.</summary>
-        public void SelectSquadOnly(int leader)
-        {
-            var w = _match.Sim.World;
-            if (leader < 0 || leader >= w.HighWater || w.Kind[leader] != EntityKind.Unit) return;
-            if (w.Owner[leader] != MatchBootstrap.HumanPlayer || !_match.Defs.Units[w.DefIndex[leader]].IsLeader) return;
-            Selected.Clear();
-            AttackArmed = false;
-            PlacingBuilding = -1;
-            Selected.Add(leader);
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == leader && !_match.Defs.Units[w.DefIndex[i]].IsLeader)
-                    Selected.Add(i);
-        }
-
-        /// <summary>Select the whole swarm (full link tree) that contains the given unit.</summary>
-        public void SelectSwarm(int anyMember)
-        {
-            var w = _match.Sim.World;
-            if (anyMember < 0 || anyMember >= w.HighWater || w.Kind[anyMember] != EntityKind.Unit) return;
-            Selected.Clear();
-            AttackArmed = false;
-            Selected.Add(anyMember);
-            ExpandSelectionToSquads(w);
-        }
-
-        /// <summary>Second drill digit: select the nth battalion — the root leader whose
-        /// battalion number is n (numbered left-to-right). No such battalion → the army
-        /// selection stands and the drill ends.</summary>
-        private void DrillToBattalion(int n)
-        {
-            var w = _match.Sim.World;
-            CancelDrill();
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
-                if (!_match.Defs.Units[w.DefIndex[i]].IsLeader || w.Leader[i] >= 0) continue;
-                if (w.SiblingOrdinal[i] != n) continue;
-                SelectSwarm(i);
-                _drillLevel = 2;
-                _drillRoot = i;
-                _drillDeadline = Time.unscaledTime + DrillChordSeconds;
-                return;
-            }
-        }
-
-        /// <summary>Third drill digit: select the mth squad of the drilled battalion ALONE
-        /// (m = 1 is the prime's own squad). No such squad → the battalion selection stands.</summary>
-        private void DrillToSquad(int m)
-        {
-            var w = _match.Sim.World;
-            int root = _drillRoot;
-            CancelDrill();
-            if (root < 0 || root >= w.HighWater || w.Kind[root] != EntityKind.Unit) return;
-            if (w.Owner[root] != MatchBootstrap.HumanPlayer || !_match.Defs.Units[w.DefIndex[root]].IsLeader) return;
-            if (m == 1) { SelectSquadOnly(root); return; }
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || w.Leader[i] != root) continue;
-                if (!_match.Defs.Units[w.DefIndex[i]].IsLeader) continue;
-                if (w.SiblingOrdinal[i] != m) continue;
-                SelectSquadOnly(i);
-                return;
-            }
-        }
-
-        private void CancelDrill()
-        {
-            _drillLevel = 0;
-            _drillRoot = -1;
-        }
-
         /// <summary>Select every military (non-worker) unit you own — soldiers, spitters, and
-        /// swarm leaders — across the whole map.</summary>
+        /// aura leaders — across the whole map.</summary>
         public void SelectAllMilitary()
         {
             var w = _match.Sim.World;
@@ -619,18 +403,6 @@ namespace Petri.Client
             _match.Enqueue(new Command { Type = CommandType.BuildProng, A = hq, B = buildingIx });
         }
 
-        /// <summary>Toggle whether selected buildings' new combat units join the nearest swarm
-        /// automatically or stay loose (following the primary's current state).</summary>
-        public void ToggleAutoAssimilate(int primary)
-        {
-            var w = _match.Sim.World;
-            if (primary < 0 || w.Kind[primary] != EntityKind.Building) return;
-            bool on = !w.AutoAssimilate[primary];
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Building)
-                    _match.Enqueue(new Command { Type = CommandType.SetAutoAssimilate, A = e, B = on ? 1 : 0 });
-        }
-
         /// <summary>Set the tuning dial on every selected own unit/building (future modifiers).</summary>
         public void ApplyDial(int value)
         {
@@ -651,55 +423,14 @@ namespace Petri.Client
             }
         }
 
-        /// <summary>The stable "primary" the HUD card and hotkey context follow: a selected
-        /// PRIME leader if any (a super-swarm presents as its spine), else any leader, else
-        /// lowest index.</summary>
+        /// <summary>The stable "primary" the HUD card and hotkey context follow: the lowest
+        /// selected entity index.</summary>
         public int PrimarySelected()
         {
-            var w = _match.Sim.World;
-            int primary = -1, primaryLeader = -1, primaryPrime = -1;
+            int primary = -1;
             foreach (int e in Selected)
-            {
                 if (primary < 0 || e < primary) primary = e;
-                if (w.Kind[e] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[e]].IsLeader) continue;
-                if (primaryLeader < 0 || e < primaryLeader) primaryLeader = e;
-                if (w.Leader[e] < 0 && (primaryPrime < 0 || e < primaryPrime)) primaryPrime = e;
-            }
-            if (primaryPrime >= 0) return primaryPrime;
-            return primaryLeader >= 0 ? primaryLeader : primary;
-        }
-
-        /// <summary>Link every other selected leader under the primary (prime) leader — their
-        /// squads become limbs of one battalion. The sim refuses cycles, deep trees, and
-        /// oversize battalions.</summary>
-        public void LinkSelected()
-        {
-            var w = _match.Sim.World;
-            int prime = PrimarySelected();
-            if (prime < 0 || w.Kind[prime] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[prime]].IsLeader) return;
-            // The hierarchy is two levels (battalion prime → squads): linking under a limb
-            // would reject in the sim, so aim at its battalion's prime instead.
-            int guard = 0;
-            while (w.Leader[prime] >= 0 && guard++ < 64) prime = w.Leader[prime];
-            foreach (int e in Selected)
-            {
-                if (e == prime || w.Kind[e] != EntityKind.Unit) continue;
-                if (!_match.Defs.Units[w.DefIndex[e]].IsLeader) continue;
-                if (w.Leader[e] == prime) continue; // already a limb of this prime
-                _match.Enqueue(new Command { Type = CommandType.AssignToLeader, A = e, B = prime });
-            }
-        }
-
-        /// <summary>Break every selected leader out of its super-swarm (squads stay intact).</summary>
-        public void UnlinkSelected()
-        {
-            var w = _match.Sim.World;
-            foreach (int e in Selected)
-            {
-                if (w.Kind[e] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[e]].IsLeader) continue;
-                if (w.Leader[e] < 0) continue;
-                _match.Enqueue(new Command { Type = CommandType.AssignToLeader, A = e, B = -1 });
-            }
+            return primary;
         }
 
         /// <summary>Pin every selected building that can produce the unit to it (-1 = back to auto).</summary>
@@ -721,14 +452,13 @@ namespace Petri.Client
             }
         }
 
-        /// <summary>Stop every selected unit (halts move orders; gatherers resume on their own).
-        /// Squad members halt with their leader — stopping it anchors the whole squad.</summary>
+        /// <summary>Stop every selected unit (halts move orders; gatherers resume on their own).</summary>
         public void StopSelected()
         {
             var w = _match.Sim.World;
             foreach (int e in Selected)
             {
-                if (w.Kind[e] != EntityKind.Unit || w.Leader[e] >= 0) continue;
+                if (w.Kind[e] != EntityKind.Unit) continue;
                 _match.Enqueue(new Command { Type = CommandType.Stop, A = e });
             }
         }
@@ -746,133 +476,21 @@ namespace Petri.Client
             // (resume an abandoned build / add extra hands); everyone else moves normally.
             int site = FindOwnSiteAt(w, wp);
 
-            // ARMY FRONT: two or more battalions ordered together spread into one line
-            // through the click, left-to-right by battalion number, instead of piling
-            // every prime onto the same point.
-            _tmpRoots.Clear();
-            foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == MatchBootstrap.HumanPlayer
-                    && _match.Defs.Units[w.DefIndex[e]].IsLeader && w.Leader[e] < 0)
-                    _tmpRoots.Add(e);
-            bool armyFront = _tmpRoots.Count >= 2;
-
             int cx = Mathf.RoundToInt(wp.x * 100f), cy = Mathf.RoundToInt(wp.y * 100f);
             bool any = false;
             foreach (int e in Selected)
             {
                 if (w.Kind[e] != EntityKind.Unit) continue;
-                if (site >= 0 && w.Leader[e] < 0 && _match.Defs.Units[w.DefIndex[e]].IsWorker)
+                if (site >= 0 && _match.Defs.Units[w.DefIndex[e]].IsWorker)
                 {
                     _match.Enqueue(new Command { Type = CommandType.AssignBuild, A = e, B = site });
                     any = true;
                     continue;
                 }
-                if (w.Leader[e] >= 0)
-                {
-                    // A limb squad commanded WITHOUT its prime (drilled in via the hierarchy
-                    // grid): the click repositions its persistent station in the swarm. When
-                    // the prime is also selected it drives, and limbs/members are skipped.
-                    if (_match.Defs.Units[w.DefIndex[e]].IsLeader && !AncestorSelected(w, e))
-                    {
-                        IssueLimbStation(w, e, wp);
-                        any = true;
-                    }
-                    continue;
-                }
-                if (_match.Defs.Units[w.DefIndex[e]].IsLeader)
-                {
-                    if (!armyFront) // spread primes get their FormationMove from IssueArmyFront
-                        _match.Enqueue(new Command { Type = CommandType.FormationMove, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
-                }
-                else
-                    _match.Enqueue(new Command { Type = CommandType.Move, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
+                _match.Enqueue(new Command { Type = CommandType.Move, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
                 any = true;
             }
-            if (armyFront) IssueArmyFront(w, wp, queue);
             if (any) _match.View.Ping(new Vector3(wp.x, wp.y, 0f), GameView.MovePing);
-        }
-
-        /// <summary>Order 2+ battalions as one army front: a line through the click,
-        /// perpendicular to the approach, battalion 1 anchoring the LEFT end. Each prime
-        /// stands at the left edge of its battalion's span so its squads (which extend to
-        /// the prime's right, one spacing per ordinal) meet the next battalion cleanly.
-        /// Every prime shares the approach facing — one front, echeloned by number.</summary>
-        private void IssueArmyFront(SimWorld w, Vector3 wp, bool queue)
-        {
-            // Left-to-right by battalion number. Client-side sort is fine: only the
-            // resulting integer command payloads ever reach the sim.
-            _tmpRoots.Sort((a, b) => w.SiblingOrdinal[a] != w.SiblingOrdinal[b]
-                ? w.SiblingOrdinal[a].CompareTo(w.SiblingOrdinal[b]) : a.CompareTo(b));
-
-            float mx = 0f, my = 0f;
-            foreach (int r in _tmpRoots)
-            {
-                mx += w.Pos[r].X.Raw / (float)Fix.OneRaw;
-                my += w.Pos[r].Y.Raw / (float)Fix.OneRaw;
-            }
-            var dir = new Vector2(wp.x - mx / _tmpRoots.Count, wp.y - my / _tmpRoots.Count);
-            if (dir.sqrMagnitude < 1e-4f) dir = Vector2.right;
-            dir.Normalize();
-            var left = new Vector2(-dir.y, dir.x);
-
-            float spacing = w.Rules.LinkSpacingCenti / 100f;
-            float total = 0f;
-            foreach (int r in _tmpRoots) total += spacing * SquadsOf(w, r);
-            float edge = total * 0.5f; // the line centers on the click; battalion 1 starts left
-            foreach (int root in _tmpRoots)
-            {
-                var target = new Vector2(wp.x, wp.y) + left * edge;
-                _match.Enqueue(new Command
-                {
-                    Type = CommandType.FormationMove, A = root,
-                    B = Mathf.RoundToInt(target.x * 100f), C = Mathf.RoundToInt(target.y * 100f),
-                    D = queue ? 1 : 0,
-                    E = Mathf.RoundToInt(dir.x * 100f), F = Mathf.RoundToInt(dir.y * 100f),
-                });
-                edge -= spacing * SquadsOf(w, root); // the next battalion starts past this span
-            }
-        }
-
-        /// <summary>Squads in a battalion: the prime plus its linked limb leaders.</summary>
-        private int SquadsOf(SimWorld w, int root)
-        {
-            int n = 1;
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == root && _match.Defs.Units[w.DefIndex[i]].IsLeader)
-                    n++;
-            return n;
-        }
-
-        private bool AncestorSelected(SimWorld w, int e)
-        {
-            int cur = w.Leader[e], guard = 0;
-            while (cur >= 0 && guard++ < 64)
-            {
-                if (Selected.Contains(cur)) return true;
-                cur = w.Leader[cur];
-            }
-            return false;
-        }
-
-        /// <summary>Set a limb's station so it stands at the clicked point — expressed relative
-        /// to its prime's anchor and facing, the same frame the swarm system steers by.</summary>
-        private void IssueLimbStation(SimWorld w, int limb, Vector3 wp)
-        {
-            int prime = w.Leader[limb];
-            bool primeMoving = w.HasMoveOrder[prime] || w.AttackMove[prime];
-            var anchorFix = primeMoving ? w.MoveTarget[prime] : w.Pos[prime];
-            var anchor = new Vector2(anchorFix.X.Raw / (float)Fix.OneRaw, anchorFix.Y.Raw / (float)Fix.OneRaw);
-            var f = new Vector2(w.Facing[prime].X.Raw / (float)Fix.OneRaw, w.Facing[prime].Y.Raw / (float)Fix.OneRaw);
-            if (f.sqrMagnitude < 1e-4f) f = Vector2.right;
-            Vector2 off = new Vector2(wp.x, wp.y) - anchor;
-            float fwd = Vector2.Dot(off, f);
-            float side = Vector2.Dot(off, new Vector2(-f.y, f.x));
-            _match.Enqueue(new Command
-            {
-                Type = CommandType.SetLimbStation, A = limb,
-                B = Mathf.RoundToInt(fwd * 100f), C = Mathf.RoundToInt(side * 100f),
-            });
-            _match.View.Ping(new Vector3(wp.x, wp.y, 0f), GameView.RallyPing);
         }
 
         /// <summary>Attack-move every selected unit toward the point (armed units engage en route).</summary>
@@ -883,7 +501,6 @@ namespace Petri.Client
             foreach (int e in Selected)
             {
                 if (w.Kind[e] != EntityKind.Unit) continue;
-                if (w.Leader[e] >= 0) continue; // the leader carries the squad's attack order
                 _match.Enqueue(new Command { Type = CommandType.AttackMove, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
                 any = true;
             }
@@ -936,11 +553,10 @@ namespace Petri.Client
                 : _match.Defs.Units[w.DefIndex[e]].CollisionRadiusCenti / 100f;
 
         /// <summary>
-        /// Beyond-All-Reason-style formation curve: the selected leaders (or, if none, units) are
-        /// spread evenly by arc-length along the ACTUAL path drawn with the mouse — following its
-        /// curve, not a straight chord — each facing perpendicular to the local curve direction,
-        /// on a coherent front (away from the group). Leaders form up via FormationMove with an
-        /// explicit facing; loose units get plain moves to their slot.
+        /// Beyond-All-Reason-style line move: every selected unit is spread evenly by
+        /// arc-length along the ACTUAL path drawn with the mouse — following its curve,
+        /// not a straight chord. Units face their travel direction; Shift+R-drag aims an
+        /// explicit front once they stand.
         /// </summary>
         private void IssueFormationPath(SimWorld w)
         {
@@ -961,85 +577,25 @@ namespace Petri.Client
             float total = _cum[_cum.Count - 1];
             if (total < 0.1f) { IssueMoveOrders(w); return; }
 
-            // Collect movers: ALL selected leaders — primes anchor to the curve, linked limbs
-            // get freeform stations so the drawn shape sticks to the super-swarm and travels
-            // with the spine. Fall back to loose units when no leaders are selected. Squad
-            // members are never individual movers — they hold formation on their leader.
+            // Movers: every selected own unit — classic per-unit control.
             _lineUnits.Clear();
             foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && _match.Defs.Units[w.DefIndex[e]].IsLeader) _lineUnits.Add(e);
-            bool leaders = _lineUnits.Count > 0;
-            if (!leaders)
-                foreach (int e in Selected)
-                    if (w.Kind[e] == EntityKind.Unit && w.Leader[e] < 0) _lineUnits.Add(e);
+                if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == MatchBootstrap.HumanPlayer) _lineUnits.Add(e);
             if (_lineUnits.Count == 0) return;
-
-            Vector2 centroid = Vector2.zero;
-            foreach (int e in _lineUnits) centroid += UnitPos(w, e);
-            centroid /= _lineUnits.Count;
-
-            // A single reference front (perpendicular to the overall chord, away from the group)
-            // keeps the whole line facing coherently even as it curves.
-            Vector2 chord = _worldPath[_worldPath.Count - 1] - _worldPath[0];
-            Vector2 refFront = new Vector2(-chord.y, chord.x);
-            if (refFront.sqrMagnitude < 1e-6f) refFront = Vector2.up;
-            Vector2 mid = SampleAt(total * 0.5f, out _);
-            if (Vector2.Dot(refFront, mid - centroid) < 0f) refFront = -refFront;
 
             // Assign movers to slots in arc-length order of their current position → no crossing.
             _lineUnits.Sort((p, q) => NearestArcLength(UnitPos(w, p)).CompareTo(NearestArcLength(UnitPos(w, q))));
 
-            // First pass: compute every mover's slot and local front along the curve.
             int n = _lineUnits.Count;
-            _slotPos.Clear();
-            _slotFront.Clear();
             for (int k = 0; k < n; k++)
             {
                 float s = n == 1 ? total * 0.5f : total * (k / (float)(n - 1));
-                Vector2 slot = SampleAt(s, out Vector2 tan);
-                Vector2 perp = new Vector2(-tan.y, tan.x);
-                if (Vector2.Dot(perp, refFront) < 0f) perp = -perp; // align to the coherent front
-                _slotPos.Add(slot);
-                _slotFront.Add(perp.normalized);
-            }
-
-            // Second pass: primes/loose leaders anchor to their slots; linked limbs instead get
-            // a FREEFORM STATION — their slot expressed relative to their prime's slot in the
-            // prime's new facing frame — so the drawn shape persists and travels with the spine.
-            for (int k = 0; k < n; k++)
-            {
-                int e = _lineUnits[k];
-                Vector2 slot = _slotPos[k];
-                int cx = Mathf.RoundToInt(slot.x * 100f), cy = Mathf.RoundToInt(slot.y * 100f);
-
-                if (!leaders)
+                Vector2 slot = SampleAt(s, out _);
+                _match.Enqueue(new Command
                 {
-                    _match.Enqueue(new Command { Type = CommandType.Move, A = e, B = cx, C = cy });
-                    _match.View.Ping(new Vector3(slot.x, slot.y, 0f), GameView.MovePing);
-                    continue;
-                }
-
-                int primeIx = w.Leader[e] >= 0 ? _lineUnits.IndexOf(w.Leader[e]) : -1;
-                if (primeIx >= 0)
-                {
-                    Vector2 f = _slotFront[primeIx];
-                    Vector2 off = slot - _slotPos[primeIx];
-                    float fwd = Vector2.Dot(off, f);
-                    float side = Vector2.Dot(off, new Vector2(-f.y, f.x));
-                    _match.Enqueue(new Command
-                    {
-                        Type = CommandType.SetLimbStation, A = e,
-                        B = Mathf.RoundToInt(fwd * 100f), C = Mathf.RoundToInt(side * 100f),
-                    });
-                }
-                else
-                {
-                    _match.Enqueue(new Command
-                    {
-                        Type = CommandType.FormationMove, A = e, B = cx, C = cy,
-                        E = Mathf.RoundToInt(_slotFront[k].x * 100f), F = Mathf.RoundToInt(_slotFront[k].y * 100f),
-                    });
-                }
+                    Type = CommandType.Move, A = _lineUnits[k],
+                    B = Mathf.RoundToInt(slot.x * 100f), C = Mathf.RoundToInt(slot.y * 100f),
+                });
                 _match.View.Ping(new Vector3(slot.x, slot.y, 0f), GameView.MovePing);
             }
         }

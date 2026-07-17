@@ -384,7 +384,6 @@ namespace Petri.Client
                         Color c = OwnerColors[w.Owner[i] % OwnerColors.Length];
                         if (ud.IsLeader) { c = Color.Lerp(c, Color.white, 0.5f); diameter *= 1.25f; }
                         else if (ud.IsWorker) c = Dim(c, 0.7f);
-                        if (w.Leaderless[i]) c = Dim(c, 0.5f); // washed out while orphaned
                         if (Time.time < _blinkUntil[i]) c = Color.Lerp(c, Color.white, 0.75f); // hit blink
                         // Ranged units (they fire projectiles) read as diamonds; melee as discs.
                         sr.sprite = ud.ProjectileSpeedCenti > 0 ? _diamond : _disc;
@@ -473,27 +472,22 @@ namespace Petri.Client
                 }
             }
 
-            // ---- Command lines: for each selected own unit that drives itself (loose units
-            // and top-level leaders), the path it will take — the active leg plus every
-            // shift-queued leg, green for moves, red for attack-moves, a dot per waypoint.
-            // Linked limb LEADERS draw their station leg too, so a marching super-swarm shows
-            // one line per leader; plain members stay silent (their leader's line speaks).
+            // ---- Command lines: for each selected own unit, the path it will take — the
+            // active leg plus every shift-queued leg, green for moves, red for attack-moves,
+            // a dot per waypoint.
             if (selected != null)
             {
                 foreach (int i in selected)
                 {
                     if (i >= w.HighWater || w.Kind[i] != EntityKind.Unit) continue;
                     if (w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
-                    bool limb = w.Leader[i] >= 0;
-                    if (limb && !defs.Units[w.DefIndex[i]].IsLeader) continue;
                     var from = new Vector3(ToF(w.Pos[i].X), ToF(w.Pos[i].Y), 0f);
-                    if (w.HasMoveOrder[i] || (!limb && w.AttackMove[i]))
+                    if (w.HasMoveOrder[i] || w.AttackMove[i])
                     {
                         var to = new Vector3(ToF(w.MoveTarget[i].X), ToF(w.MoveTarget[i].Y), 0f);
                         DrawOrderLine(from, to, w.AttackMove[i], ref overlay);
                         from = to;
                     }
-                    if (limb) continue; // limbs hold no personal queue (cleared on link)
                     int qb = i * SimConstants.MaxOrderQueue;
                     for (int q = 0; q < w.QueueCount[i]; q++)
                     {

@@ -46,7 +46,6 @@ namespace Petri.Core
         public Fix MapWidth;
         public Fix MapHeight;
         public readonly int UnitDefCount;
-        private readonly byte[] _defaultZones; // per unit def, from data — template for new squads
 
         public readonly PlayerState[] Players;
 
@@ -76,14 +75,6 @@ namespace Petri.Core
         public readonly int[] NodeFood;         // node: resource amount remaining (food OR minerals)
         public readonly bool[] NodeMineral;     // node: true = yields minerals, false = nutrients
         public readonly bool[] CarryMineral;    // worker: the carried load is minerals (routes deposit)
-        public readonly int[] Leader;           // unit: entity index of its swarm leader, -1 unassigned
-        public readonly bool[] Leaderless;      // unit: leader died; -25% move/attack until it rejoins
-        public readonly bool[] Settled;         // member/limb: at rest by its standing leader; no
-                                                //   re-steering until the leader moves (stops jostling)
-        public readonly bool[] SeekingSwarm;    // loose unit from an auto-assimilate building: joins
-                                                //   the first nearby leader that has room
-        public readonly bool[] MoveAsOne;       // leader: pace the whole swarm tree at its slowest
-                                                //   unit's speed so the body arrives together
         public readonly int[] SupplyTicks;      // unit: grace reservoir; refills inside friendly
                                                 //   supply, drains outside; 0 = unsupplied debuff
         public readonly byte[] Tier;            // supply cache: upgrade level (0 = base) — doubles
@@ -92,19 +83,7 @@ namespace Petri.Core
         public readonly int[] CaravanCache;     // worker: cache it's hauling food to, -1 none
         public readonly byte[] Dial;            // per-entity 0..100 tuning dial (UI slider); reserved
                                                 //   for future per-entity modifiers, hashed already
-        public readonly byte[] ZoneMatrix;      // leader: per-unit-def zone assignment (the placement
-                                                //   matrix), flattened [entity * UnitDefCount + def]
-        public readonly bool[] Stance;          // leader: true = Encircle stance (wrap the nearest enemy)
-        public readonly FixVec2[] Facing;       // unit body facing; for leaders, the formation front
-        public readonly bool[] FacingHeld;      // leader: facing was explicitly ordered (drag-line or
-                                                //   SetFacing) — don't auto-turn toward travel
-        public readonly bool[] HasLimbStation;  // linked leader: player drew a custom station
-        public readonly FixVec2[] LimbStation;  // linked leader: offset from prime (X=fwd, Y=side, prime frame)
-        public readonly byte[] SiblingOrdinal;  // leader: position among siblings, left-to-right.
-                                                //   Roots = battalion number 1..N per player; limbs =
-                                                //   squad number 2..N (the prime is implicitly squad 1).
-                                                //   0 = unassigned (members, or awaiting Pass 1d).
-        public readonly bool[] AutoAssimilate;  // building: produced combat units join the nearest swarm
+        public readonly FixVec2[] Facing;       // unit body facing (directional damage reads it)
         public readonly int[] Generation;       // per-slot version, bumped each Spawn — (index,gen)
                                                 //   is a stable identity the UI uses for control groups
         public int HighWater;
@@ -125,10 +104,6 @@ namespace Petri.Core
 
         // Derived per-tick scratch (NOT hashed, never carries state across ticks).
         public readonly int[] ScratchUnitCounts;
-        public readonly int[] ScratchSquadCount;
-        public readonly int[] ScratchBandCount;
-        public readonly int[] ScratchBandCursor;
-        public readonly int[] ScratchLinkCount; // Pass 1d write buffer for sibling-ordinal ranks
         public readonly bool[] ScratchConnected; // per-building: linked to an HQ this tick
         public readonly int[] ScratchBuilders;  // per-site: workers in build reach this tick
         // Per-tick index lists (ascending, so scans keep their lowest-index tie-breaks) that
@@ -143,19 +118,17 @@ namespace Petri.Core
         // every combat tick from hashed building state, so it stays out of StateHash.
         public readonly int[] ScratchAttackBonus;
         public int ScratchNodeCount, ScratchDropoffCount, ScratchWorkerCount, ScratchCacheCount;
-        public readonly int[] ScratchRoot;      // per-unit swarm-tree root (derived each tick)
-        public readonly long[] ScratchMinStep;  // per-root slowest per-tick step (Fix raw)
-        public readonly long[] ScratchStepCap;  // per-unit formation-travel speed cap (Fix raw, 0 = none)
+        public readonly int[] ScratchQueue;     // BFS queue for SupplySystem; leader list for LeaderAuraSystem
+        public readonly bool[] ScratchLeaderAura; // unit: inside a friendly leader's aura this tick
 
         public int Capacity => Kind.Length;
 
-        public SimWorld(Rules rules, int playerCount, int unitDefCount, int upgradeCount, Fix mapWidth, Fix mapHeight, ulong seed, byte[] defaultZones)
+        public SimWorld(Rules rules, int playerCount, int unitDefCount, int upgradeCount, Fix mapWidth, Fix mapHeight, ulong seed)
         {
             Rules = rules;
             MapWidth = mapWidth;
             MapHeight = mapHeight;
             UnitDefCount = unitDefCount;
-            _defaultZones = defaultZones;
             Rng = new Pcg32(seed, 0x5EEDCAFE);
             int cap = rules.MaxEntities;
             Kind = new EntityKind[cap];
@@ -184,29 +157,14 @@ namespace Petri.Core
             NodeFood = new int[cap];
             NodeMineral = new bool[cap];
             CarryMineral = new bool[cap];
-            Leader = new int[cap];
-            Leaderless = new bool[cap];
-            Settled = new bool[cap];
-            SeekingSwarm = new bool[cap];
-            MoveAsOne = new bool[cap];
             SupplyTicks = new int[cap];
             Tier = new byte[cap];
             DepotStock = new int[cap];
             CaravanCache = new int[cap];
             Dial = new byte[cap];
-            ZoneMatrix = new byte[cap * unitDefCount];
-            Stance = new bool[cap];
             Facing = new FixVec2[cap];
-            FacingHeld = new bool[cap];
-            HasLimbStation = new bool[cap];
-            LimbStation = new FixVec2[cap];
-            SiblingOrdinal = new byte[cap];
-            AutoAssimilate = new bool[cap];
             Generation = new int[cap];
             ScratchUnitCounts = new int[playerCount * unitDefCount];
-            ScratchSquadCount = new int[cap];
-            ScratchBandCount = new int[SimConstants.ZoneCount];
-            ScratchBandCursor = new int[SimConstants.ZoneCount];
             GridCellsX = System.Math.Max(1, (int)(mapWidth.Raw >> GridShift) + 1);
             GridCellsY = System.Math.Max(1, (int)(mapHeight.Raw >> GridShift) + 1);
             GridHead = new int[GridCellsX * GridCellsY];
@@ -214,7 +172,6 @@ namespace Petri.Core
             for (int c = 0; c < GridHead.Length; c++) GridHead[c] = -1; // empty until first rebuild
             for (int i = 0; i < cap; i++) GridNext[i] = -1;
 
-            ScratchLinkCount = new int[cap];
             ScratchConnected = new bool[cap];
             ScratchBuilders = new int[cap];
             ScratchDepots = new int[cap];
@@ -223,9 +180,8 @@ namespace Petri.Core
             ScratchWorkers = new int[cap];
             ScratchCaches = new int[cap];
             ScratchAttackBonus = new int[playerCount];
-            ScratchRoot = new int[cap];
-            ScratchMinStep = new long[cap];
-            ScratchStepCap = new long[cap];
+            ScratchQueue = new int[cap];
+            ScratchLeaderAura = new bool[cap];
 
             Players = new PlayerState[playerCount];
             for (int p = 0; p < playerCount; p++)
@@ -268,24 +224,12 @@ namespace Petri.Core
                 NodeFood[i] = 0;
                 NodeMineral[i] = false;
                 CarryMineral[i] = false;
-                Leader[i] = -1;
-                Leaderless[i] = false;
-                Settled[i] = false;
-                SeekingSwarm[i] = false;
-                MoveAsOne[i] = true; // swarms default to arriving as one body
                 SupplyTicks[i] = Rules.SupplyGraceTicks; // fresh units start fully supplied
                 Tier[i] = 0;
                 DepotStock[i] = 0; // depots start empty (MatchSetup fills starting buildings)
                 CaravanCache[i] = -1;
                 Dial[i] = 50;
-                for (int u = 0; u < UnitDefCount; u++) ZoneMatrix[i * UnitDefCount + u] = _defaultZones[u];
-                Stance[i] = false;
                 Facing[i] = new FixVec2(Fix.One, Fix.Zero);
-                FacingHeld[i] = false;
-                HasLimbStation[i] = false;
-                LimbStation[i] = FixVec2.Zero;
-                SiblingOrdinal[i] = 0;
-                AutoAssimilate[i] = true; // buildings default to feeding the nearest swarm
                 Generation[i]++; // new occupant of this slot — never reset, only advances
                 if (i >= HighWater) HighWater = i + 1;
                 return i;

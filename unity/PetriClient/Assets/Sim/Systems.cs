@@ -5,7 +5,7 @@ namespace Petri.Core
     /// <summary>
     /// Automated production: buildings continuously produce whichever producible unit is
     /// furthest below its weight share (players set composition, not build orders). Newly
-    /// completed combat units auto-reinforce the nearest swarm leader with capacity.
+    /// completed units walk to the rally point, or stand by the building without one.
     /// Deterministic: dense-index scans, integer cross-multiplied comparisons, one RNG draw
     /// per completed unit for the spawn direction.
     /// </summary>
@@ -39,8 +39,7 @@ namespace Petri.Core
                     {
                         // Player pinned this building to one unit: produce exactly that whenever
                         // affordable, bypassing composition weights entirely.
-                        if (player.Food >= defs.Units[w.ProduceOverride[i]].FoodCost
-                            && UnderLeaderCap(w, defs, counts, w.Owner[i], w.ProduceOverride[i]))
+                        if (player.Food >= defs.Units[w.ProduceOverride[i]].FoodCost)
                             best = w.ProduceOverride[i];
                     }
                     else
@@ -51,7 +50,6 @@ namespace Petri.Core
                         {
                             int weight = player.ProductionWeights[cand];
                             if (weight <= 0 || player.Food < defs.Units[cand].FoodCost) continue;
-                            if (!UnderLeaderCap(w, defs, counts, w.Owner[i], cand)) continue;
                             if (best < 0 ||
                                 (long)weight * (counts[w.Owner[i] * u + best] + 1) >
                                 (long)player.ProductionWeights[best] * (counts[w.Owner[i] * u + cand] + 1))
@@ -71,45 +69,21 @@ namespace Petri.Core
                     Fix dist = Fix.Ratio(bdef.CollisionRadiusCenti + udef.CollisionRadiusCenti + 20, 100);
                     FixVec2 pos = w.ClampToMap(w.Pos[i] + SimWorld.RingDir(w.Rng.NextInt(8)) * dist);
                     int e = w.Spawn(EntityKind.Unit, w.ProduceChoice[i], w.Owner[i], pos, udef.MaxHp);
-                    if (e >= 0)
+                    if (e >= 0 && w.HasRally[i])
                     {
-                        if (w.HasRally[i])
+                        if (udef.IsWorker)
                         {
-                            if (udef.IsWorker)
-                            {
-                                // Rallied onto a resource pile → the worker mines that pile
-                                // (WorkerSystem walks it over). Rallied elsewhere → walk there,
-                                // then it gathers the nearest pile on its own.
-                                int node = WorkerSystem.NodeAtPoint(w, w.RallyPoint[i]);
-                                if (node >= 0) w.WorkNode[e] = node;
-                                else { w.MoveTarget[e] = w.RallyPoint[i]; w.HasMoveOrder[e] = true; }
-                            }
-                            else
-                            {
-                                // Combat units join a swarm leader near the rally point if one
-                                // has room (and the building assimilates); otherwise walk there —
-                                // still SEEKING, so they join a swarm that gains room later.
-                                int lead = udef.IsLeader || !w.AutoAssimilate[i] ? -1
-                                    : SwarmSystem.NearestLeaderWithCapacityNearPoint(w, defs, w.Owner[i],
-                                        w.RallyPoint[i], Fix.Ratio(w.Rules.SwarmJoinRadiusCenti, 100));
-                                if (lead >= 0) w.Leader[e] = lead;
-                                else
-                                {
-                                    w.MoveTarget[e] = w.RallyPoint[i];
-                                    w.HasMoveOrder[e] = true;
-                                    if (!udef.IsLeader && w.AutoAssimilate[i]) w.SeekingSwarm[e] = true;
-                                }
-                            }
+                            // Rallied onto a resource pile → the worker mines that pile
+                            // (WorkerSystem walks it over). Rallied elsewhere → walk there,
+                            // then it gathers the nearest pile on its own.
+                            int node = WorkerSystem.NodeAtPoint(w, w.RallyPoint[i]);
+                            if (node >= 0) w.WorkNode[e] = node;
+                            else { w.MoveTarget[e] = w.RallyPoint[i]; w.HasMoveOrder[e] = true; }
                         }
-                        else if (!udef.IsWorker && !udef.IsLeader && w.AutoAssimilate[i])
+                        else
                         {
-                            // Fresh combat units reinforce the nearest swarm with room (never
-                            // workers or leaders themselves). If every leader is full right now,
-                            // KEEP SEEKING — they join the next leader that appears or frees up,
-                            // instead of staying loose forever.
-                            int lead = SwarmSystem.NearestLeaderWithCapacityFresh(w, defs, e);
-                            if (lead >= 0) w.Leader[e] = lead;
-                            else w.SeekingSwarm[e] = true;
+                            w.MoveTarget[e] = w.RallyPoint[i];
+                            w.HasMoveOrder[e] = true;
                         }
                     }
                     w.ProduceChoice[i] = -1;
@@ -117,557 +91,37 @@ namespace Petri.Core
                 }
             }
         }
-
-        /// <summary>Leaders are capped per player (Rules.MaxLeadersPerPlayer — battalion and
-        /// squad leaders combined). counts[] already includes live units AND queued production,
-        /// so a leader mid-build blocks one past the cap from being queued.</summary>
-        private static bool UnderLeaderCap(SimWorld w, DefDatabase defs, int[] counts, byte owner, int cand)
-        {
-            if (!defs.Units[cand].IsLeader) return true;
-            int leaders = 0;
-            for (int k = 0; k < defs.Units.Length; k++)
-                if (defs.Units[k].IsLeader) leaders += counts[owner * defs.Units.Length + k];
-            return leaders < w.Rules.MaxLeadersPerPlayer;
-        }
     }
 
     /// <summary>
-    /// Swarm leaders and tactical formations. Each leader commands up to
-    /// Rules.MaxUnitsPerLeader units. Squad members hold data-driven formation slots laid
-    /// out in the leader's facing frame; role scores decide which band a unit belongs to.
-    /// When a leader dies its squad goes Leaderless (-25% move/attack via rules rationals),
-    /// retreats to the nearest leader with capacity, and auto-joins inside the join radius.
+    /// The leader's command aura: friendly units standing within Rules.LeaderAuraRadiusCenti
+    /// of a live, same-owner leader deal Rules.LeaderAuraBonus damage. Derived per-tick
+    /// scratch (like ScratchAttackBonus): recomputed from hashed positions after movement,
+    /// never hashed itself, order-independent (a pure within-radius predicate).
     /// </summary>
-    public static class SwarmSystem
+    public static class LeaderAuraSystem
     {
         public static void Tick(SimWorld w, DefDatabase defs)
         {
-            w.RebuildGrid(); // posture release and encircle anchoring query the spatial grid
-
-            // Pass 1: validate leader links (a dead leader's index may already be reused —
-            // possibly by an enemy or a non-leader — so re-check everything), count squads.
-            // squad[] counts only non-leader members: leader→leader links are limbs of a
-            // larger swarm and don't consume member capacity. A leader whose prime died just
-            // unlinks — commanders never suffer the leaderless penalty.
-            int[] squad = w.ScratchSquadCount;
-            Array.Clear(squad, 0, w.HighWater);
-            for (int i = 0; i < w.HighWater; i++)
+            Array.Clear(w.ScratchLeaderAura, 0, w.HighWater);
+            int n = 0;
+            int[] leaders = w.ScratchQueue; // reused scratch; SupplySystem is done with it
+            for (int i = 0; i < w.HighWater; i++) // ascending index
+                if (w.Kind[i] == EntityKind.Unit && w.Hp[i] > 0 && defs.Units[w.DefIndex[i]].IsLeader)
+                    leaders[n++] = i;
+            if (n == 0) return;
+            Fix r = Fix.Ratio(w.Rules.LeaderAuraRadiusCenti, 100);
+            Fix rSq = r * r;
+            for (int u = 0; u < w.HighWater; u++)
             {
-                if (w.Kind[i] != EntityKind.Unit) continue;
-                int lead = w.Leader[i];
-                if (lead < 0) continue;
-                bool selfLeader = defs.Units[w.DefIndex[i]].IsLeader;
-                if (w.Kind[lead] != EntityKind.Unit || !defs.Units[w.DefIndex[lead]].IsLeader || w.Owner[lead] != w.Owner[i])
+                if (w.Kind[u] != EntityKind.Unit) continue;
+                for (int k = 0; k < n; k++)
                 {
-                    w.Leader[i] = -1;
-                    w.Settled[i] = false;
-                    w.AttackMove[i] = false; // stale posture must not keep driving it
-                    w.SiblingOrdinal[i] = 0; // re-enters its sibling line at the right end
-                    if (!selfLeader) w.Leaderless[i] = true;
-                }
-                else if (!selfLeader) squad[lead]++;
-            }
-
-            // Pass 1b: "arrive as one" pacing. Each swarm tree whose root leader has MoveAsOne
-            // travels at its slowest unit's speed, so the body arrives together instead of
-            // stringing out. Derived scratch only — recomputed every tick from hashed state;
-            // MovementSystem applies the cap to formation travel (combat chasing stays full
-            // speed: fights are fought at each unit's own pace).
-            Array.Clear(w.ScratchStepCap, 0, w.HighWater);
-            Array.Clear(w.ScratchMinStep, 0, w.HighWater);
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit) continue;
-                int root = i, guard = 0;
-                while (w.Leader[root] >= 0 && guard++ <= w.HighWater) root = w.Leader[root];
-                w.ScratchRoot[i] = root;
-                long step = MovementSystem.PerTickStep(defs.Units[w.DefIndex[i]].MoveSpeedCenti).Raw;
-                if (w.ScratchMinStep[root] == 0 || step < w.ScratchMinStep[root]) w.ScratchMinStep[root] = step;
-            }
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit) continue;
-                int root = w.ScratchRoot[i];
-                w.ScratchStepCap[i] = w.MoveAsOne[root] ? w.ScratchMinStep[root] : 0;
-            }
-
-            // Pass 1c: swarm-link load balancing. Members redistribute evenly across the
-            // squads of a linked swarm — one transfer per tree per tick, from the fullest
-            // squad to the emptiest (the member nearest the recipient leader moves), so
-            // rebalancing reads as an organic trickle rather than a teleport. HOOK: when
-            // formation limb-layout defs land, this is where per-limb role priorities bias
-            // WHO transfers WHERE (vanguard limbs pull tanks, rearguard limbs pull ranged).
-            for (int root = 0; root < w.HighWater; root++)
-            {
-                if (w.Kind[root] != EntityKind.Unit || !defs.Units[w.DefIndex[root]].IsLeader) continue;
-                if (w.Leader[root] >= 0) continue; // tree tops only
-
-                int fullest = -1, emptiest = -1;
-                for (int L = 0; L < w.HighWater; L++)
-                {
-                    if (w.Kind[L] != EntityKind.Unit || !defs.Units[w.DefIndex[L]].IsLeader) continue;
-                    if (w.ScratchRoot[L] != root) continue; // this tree (includes the root)
-                    if (fullest < 0 || squad[L] > squad[fullest]) fullest = L;
-                    if (emptiest < 0 || squad[L] < squad[emptiest]) emptiest = L;
-                }
-                if (fullest < 0 || emptiest < 0 || fullest == emptiest) continue;
-                if (squad[fullest] - squad[emptiest] <= 1) continue; // balanced enough
-
-                int pick = -1;
-                Fix bestSq = Fix.Zero;
-                for (int i = 0; i < w.HighWater; i++)
-                {
-                    if (!IsMemberOf(w, defs, i, fullest)) continue;
-                    Fix dsq = (w.Pos[emptiest] - w.Pos[i]).LengthSq;
-                    if (pick < 0 || dsq < bestSq) { pick = i; bestSq = dsq; }
-                }
-                if (pick < 0) continue;
-                w.Leader[pick] = emptiest;
-                w.Settled[pick] = false;
-                squad[fullest]--;
-                squad[emptiest]++;
-            }
-
-            // Pass 1d: sibling ordinals — every leader's stable left-to-right position among
-            // its siblings. Roots of one player are battalion siblings (1..N); limbs of one
-            // prime are squad siblings (2..N — the prime itself is squad 1). Assigned ordinals
-            // compact preserving relative order (equal ordinals break to the lower index);
-            // unassigned leaders (fresh spawns, just-relinked) append after, in index order —
-            // a new battalion or squad always joins at the right end of the line. Ranks are
-            // computed from pre-pass values into scratch and copied back afterward: in-place
-            // writes mid-scan would let later leaders read half-updated state and desync peers.
-            int[] ord = w.ScratchLinkCount;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
-                int prime = w.Leader[i];
-                int self = w.SiblingOrdinal[i];
-                int rank = prime < 0 ? 1 : 2;
-                for (int j = 0; j < w.HighWater; j++)
-                {
-                    if (j == i || w.Kind[j] != EntityKind.Unit || !defs.Units[w.DefIndex[j]].IsLeader) continue;
-                    bool sibling = prime < 0
-                        ? w.Leader[j] < 0 && w.Owner[j] == w.Owner[i]
-                        : w.Leader[j] == prime;
-                    if (!sibling) continue;
-                    int other = w.SiblingOrdinal[j];
-                    if (self > 0)
-                    {
-                        if (other > 0 && (other < self || (other == self && j < i))) rank++;
-                    }
-                    else
-                    {
-                        // Unassigned: every assigned sibling comes first, then earlier
-                        // unassigned ones (index order keeps the append deterministic).
-                        if (other > 0 || j < i) rank++;
-                    }
-                }
-                ord[i] = rank;
-            }
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && defs.Units[w.DefIndex[i]].IsLeader)
-                    w.SiblingOrdinal[i] = (byte)ord[i];
-
-            // Pass 2: leaderless units retreat to the nearest friendly leader with capacity
-            // and join once inside the join radius. SEEKING units (produced by an
-            // auto-assimilate building when every leader was full) also join a capacity
-            // leader that comes within the join radius — but they wait in place rather than
-            // marching across the map, so rally points and stockpiles stay meaningful.
-            //
-            // COMMITTED units — attack-moving or with an enemy in acquire range — never
-            // abandon their engagement to go find a leader. They keep fighting where they
-            // are and only get absorbed when a leader comes to THEM (cohesion range).
-            Fix joinR = Fix.Ratio(w.Rules.SwarmJoinRadiusCenti, 100);
-            Fix recruitR = Fix.Ratio(w.Rules.SquadCohesionRadiusCenti, 100);
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit) continue;
-                bool leaderless = w.Leaderless[i];
-                if (!leaderless && !w.SeekingSwarm[i]) continue;
-                bool committed = w.AttackMove[i] || CombatSystem.EnemyInAcquireRange(w, defs, i);
-                int lead = NearestLeaderWithCapacity(w, defs, i, squad);
-                if (lead < 0) continue; // no leader anywhere: stand and fight (or keep waiting)
-                Fix limit = committed ? recruitR : joinR;
-                if ((w.Pos[lead] - w.Pos[i]).LengthSq <= limit * limit)
-                {
-                    // NOTE: joining does NOT clear the leaderless penalty — a survivor stays
-                    // -25% until it physically reaches its new leader (cohesion range, pass 3b).
-                    // Losing a leader hurts for the whole retreat, not for one tick.
-                    w.Leader[i] = lead;
-                    w.SeekingSwarm[i] = false;
-                    w.Settled[i] = false; // walk to a slot first, then rest
-                    w.AttackMove[i] = false; // the leader drives it from here (posture flows down)
-                    w.QueueCount[i] = 0;     // any leftover personal plan dies with autonomy
-                    squad[lead]++;
-                    w.HasMoveOrder[i] = false;
-                    w.MoveTarget[i] = w.Pos[i];
-                }
-                else if (leaderless && !committed)
-                {
-                    w.MoveTarget[i] = w.Pos[lead];
-                    w.HasMoveOrder[i] = true;
+                    int L = leaders[k];
+                    if (L == u || w.Owner[L] != w.Owner[u]) continue; // same owner; never self
+                    if ((w.Pos[L] - w.Pos[u]).LengthSq <= rSq) { w.ScratchLeaderAura[u] = true; break; }
                 }
             }
-
-            // Pass 3a: linked sub-leaders are limbs of a larger swarm — each holds a station
-            // abreast of its prime, arrayed left-to-right by squad ordinal (the prime is
-            // squad 1, leftmost), and inherits the prime's facing, so one order to the prime
-            // moves the whole battle line as one body.
-            Fix slack = Fix.Ratio(60, 100);
-            Fix regroupR = Fix.Ratio(w.Rules.RegroupRadiusCenti, 100);
-            Fix linkSpacing = Fix.Ratio(w.Rules.LinkSpacingCenti, 100);
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
-                int prime = w.Leader[i];
-                if (prime < 0) continue; // pass 1 guarantees any remaining link is valid
-                // Attack posture flows down the tree: an attack-moving super-swarm releases
-                // every squad in it to fight on contact.
-                w.AttackMove[i] = w.AttackMove[prime];
-                // A limb in attack posture with an enemy in reach fights instead of holding
-                // station (no standing order → CombatSystem chases and attacks).
-                if (w.AttackMove[i] && CombatSystem.EnemyInAcquireRange(w, defs, i))
-                {
-                    w.HasMoveOrder[i] = false;
-                    w.Settled[i] = false;
-                    continue;
-                }
-                FixVec2 pf = w.Facing[prime];
-                if (pf.LengthSq == Fix.Zero) pf = new FixVec2(Fix.One, Fix.Zero);
-                w.Facing[i] = pf; // the limb faces with the spine
-                var pPerp = new FixVec2(-pf.Y, pf.X);
-
-                // While the prime is marching, stations anchor at its DESTINATION — limbs path
-                // straight to their final spots instead of chasing the spine mid-route (which
-                // made sub-swarms take long indirect paths). When the prime stands, stations
-                // ride its actual position so the body drifts and turns with it.
-                bool primeMoving = w.HasMoveOrder[prime] || w.AttackMove[prime];
-                FixVec2 anchor = primeMoving ? w.MoveTarget[prime] : w.Pos[prime];
-
-                FixVec2 station;
-                if (w.HasLimbStation[i])
-                {
-                    // Freeform station drawn by the player: a fixed offset in the prime's
-                    // facing frame, so the drawn shape travels and turns with the spine.
-                    station = w.ClampToMap(anchor + pf * w.LimbStation[i].X + pPerp * w.LimbStation[i].Y);
-                }
-                else
-                {
-                    // Left-to-right battle line: squad N stands N-1 spacings to the prime's
-                    // right. pPerp is the LEFT of the facing, so right is negative.
-                    Fix side = -(linkSpacing * Fix.FromInt(w.SiblingOrdinal[i] - 1));
-                    station = w.ClampToMap(anchor + pPerp * side);
-                }
-
-                // Rest-until-the-spine-moves: a settled limb ignores small drift; it wakes when
-                // the prime gets an order or the limb is knocked far off station.
-                Fix stationSq = (station - w.Pos[i]).LengthSq;
-                if (primeMoving || stationSq > regroupR * regroupR) w.Settled[i] = false;
-                if (w.Settled[i]) { w.HasMoveOrder[i] = false; continue; }
-
-                if (stationSq > slack * slack)
-                {
-                    w.MoveTarget[i] = station;
-                    w.HasMoveOrder[i] = true;
-                }
-                else
-                {
-                    w.HasMoveOrder[i] = false;
-                    if (!primeMoving) w.Settled[i] = true;
-                }
-            }
-
-            // Pass 3b: steer squad members onto formation slots. The slot pattern is centered
-            // on the leader — the body forms AROUND the spine, not in front of it — by
-            // subtracting the mean slot offset. Within the slack radius the order is released
-            // so auto-engagement (CombatSystem) takes over.
-            for (int lead = 0; lead < w.HighWater; lead++)
-            {
-                if (w.Kind[lead] != EntityKind.Unit || squad[lead] == 0) continue;
-                if (!defs.Units[w.DefIndex[lead]].IsLeader) continue;
-                int U = w.UnitDefCount;
-                FixVec2 f = w.Facing[lead];
-                if (f.LengthSq == Fix.Zero) f = new FixVec2(Fix.One, Fix.Zero);
-                var perp = new FixVec2(-f.Y, f.X);
-
-                // Encircle stance: this squad wraps the nearest enemy in anchor range. Non-Guard
-                // members ring IT (Rear holds the near face as a firing block); the Guard zone
-                // always stays on the leader. No target in range → normal zone layout.
-                int anchorEnemy = -1;
-                FixVec2 fe = f, pe = perp, anchorPos = w.Pos[lead];
-                if (w.Stance[lead])
-                {
-                    anchorEnemy = NearestEnemy(w, w.Owner[lead], w.Pos[lead], Fix.Ratio(w.Rules.EnemyAnchorRangeCenti, 100));
-                    if (anchorEnemy >= 0)
-                    {
-                        anchorPos = w.Pos[anchorEnemy];
-                        FixVec2 d = anchorPos - w.Pos[lead];
-                        Fix len = d.Length;
-                        if (len.Raw > 0)
-                        {
-                            fe = new FixVec2(d.X / len, d.Y / len);
-                            pe = new FixVec2(-fe.Y, fe.X);
-                        }
-                    }
-                }
-
-                int[] bandN = w.ScratchBandCount;   // per-zone member counts
-                int[] bandK = w.ScratchBandCursor;  // per-zone slot cursors
-                int spread = 0, ringK = 0;          // Spread interleave + encircle-ring cursors
-
-                // The placement matrix decides each member's zone; Spread interleaves its
-                // members alternately through Front and Rear. Cursors reset per scan so the
-                // mean and placement scans resolve identical slots.
-                int ZoneOfMember(int i)
-                {
-                    int z = w.ZoneMatrix[lead * U + w.DefIndex[i]];
-                    if (z == SimConstants.ZoneSpread)
-                    {
-                        z = (spread & 1) == 0 ? SimConstants.ZoneFront : SimConstants.ZoneRear;
-                        spread++;
-                    }
-                    return z;
-                }
-
-                Array.Clear(bandN, 0, SimConstants.ZoneCount);
-                Array.Clear(bandK, 0, SimConstants.ZoneCount);
-                for (int i = 0; i < w.HighWater; i++)
-                    if (IsMemberOf(w, defs, i, lead))
-                        bandN[ZoneOfMember(i)]++;
-
-                // Zone slot math (layout tuned via rules zone* keys; identical k-order across scans).
-                var rules = w.Rules;
-                void Offsets(int zone, int k, out Fix fwd, out Fix perpOff)
-                {
-                    switch (zone)
-                    {
-                        case SimConstants.ZoneFront:
-                        case SimConstants.ZoneRear:
-                        {
-                            // Ranked block: Front marches ahead of the spine, Rear behind it.
-                            bool front = zone == SimConstants.ZoneFront;
-                            int perRow = rules.ZoneRowWidth > 0 ? rules.ZoneRowWidth : 6;
-                            int rank = k / perRow, file = k % perRow;
-                            int rowCount = System.Math.Min(perRow, bandN[zone] - rank * perRow);
-                            fwd = Fix.Ratio(front ? rules.ZoneFrontForwardCenti : rules.ZoneRearForwardCenti, 100)
-                                - Fix.Ratio(rules.ZoneRankSpacingCenti, 100) * Fix.FromInt(rank);
-                            perpOff = Fix.FromRaw(Fix.Ratio(rules.ZoneSpacingCenti, 100).Raw * (2 * file - (rowCount - 1)) / 2);
-                            return;
-                        }
-                        case SimConstants.ZoneFlanks:
-                        {
-                            // Mirrored at both ends of the line, pairs stepping outward.
-                            Fix mag = Fix.Ratio(rules.ZoneFlankSideCenti, 100)
-                                + Fix.Ratio(rules.ZoneSpacingCenti, 100) * Fix.FromInt(k >> 1);
-                            fwd = Fix.Ratio(60, 100);
-                            perpOff = (k & 1) == 0 ? mag : -mag;
-                            return;
-                        }
-                        default: // ZoneGuard — shells ringing the leader.
-                        {
-                            FixVec2 dir = SimWorld.RingDir(k);
-                            Fix radius = Fix.Ratio(rules.ZoneGuardRadiusCenti, 100)
-                                + Fix.Ratio(rules.ZoneGuardGapCenti, 100) * Fix.FromInt(k >> 3);
-                            fwd = dir.X * radius;
-                            perpOff = dir.Y * radius;
-                            return;
-                        }
-                    }
-                }
-
-                // Encircle slots, anchored on the enemy in the squad→enemy frame.
-                FixVec2 EncircleSlot(int zone, int k)
-                {
-                    if (zone == SimConstants.ZoneRear)
-                    {
-                        int perRow = rules.ZoneRowWidth > 0 ? rules.ZoneRowWidth : 6;
-                        int rank = k / perRow, file = k % perRow;
-                        int rowCount = System.Math.Min(perRow, bandN[zone] - rank * perRow);
-                        Fix bf = Fix.Ratio(-170, 100) - Fix.Ratio(rules.ZoneRankSpacingCenti, 100) * Fix.FromInt(rank);
-                        Fix bp = Fix.FromRaw(Fix.Ratio(rules.ZoneSpacingCenti, 100).Raw * (2 * file - (rowCount - 1)) / 2);
-                        return w.ClampToMap(anchorPos + fe * bf + pe * bp);
-                    }
-                    FixVec2 dir = SimWorld.RingDir(k);
-                    Fix radius = Fix.Ratio(220, 100) + Fix.Ratio(90, 100) * Fix.FromInt(k >> 3);
-                    return w.ClampToMap(anchorPos + fe * (dir.X * radius) + pe * (dir.Y * radius));
-                }
-
-                // Scan A: mean slot offset (the centroid of the body relative to the leader).
-                // Enemy-anchored members (encircling) stay out of the centering math.
-                Fix sumFwd = Fix.Zero, sumPerp = Fix.Zero;
-                int meanCount = 0;
-                spread = 0;
-                ringK = 0;
-                for (int i = 0; i < w.HighWater; i++)
-                {
-                    if (!IsMemberOf(w, defs, i, lead)) continue;
-                    int z = ZoneOfMember(i);
-                    if (anchorEnemy >= 0 && z != SimConstants.ZoneGuard)
-                    {
-                        if (z == SimConstants.ZoneRear) bandK[z]++; else ringK++;
-                        continue;
-                    }
-                    Offsets(z, bandK[z]++, out Fix fwd, out Fix po);
-                    sumFwd += fwd;
-                    sumPerp += po;
-                    meanCount++;
-                }
-                Fix meanFwd = meanCount > 0 ? Fix.FromRaw(sumFwd.Raw / meanCount) : Fix.Zero;
-                Fix meanPerp = meanCount > 0 ? Fix.FromRaw(sumPerp.Raw / meanCount) : Fix.Zero;
-
-                // Scan B: place, re-centered so the leader sits at the body's centroid.
-                // Members REST once they arrive (or physically touch the leader) while the
-                // leader is standing — no re-steering against collision jostle — and wake when
-                // the leader moves again or they get knocked far off their slot.
-                bool leadMoving = w.HasMoveOrder[lead] || w.AttackMove[lead];
-                bool attackPosture = w.AttackMove[lead];
-                Fix leadR = Fix.Ratio(defs.Units[w.DefIndex[lead]].CollisionRadiusCenti, 100);
-                Array.Clear(bandK, 0, SimConstants.ZoneCount);
-                spread = 0;
-                ringK = 0;
-                Fix cohesionR = Fix.Ratio(w.Rules.SquadCohesionRadiusCenti, 100);
-                for (int i = 0; i < w.HighWater; i++)
-                {
-                    if (!IsMemberOf(w, defs, i, lead)) continue;
-                    int z = ZoneOfMember(i);
-                    bool encircling = anchorEnemy >= 0 && z != SimConstants.ZoneGuard;
-                    int k = encircling && z != SimConstants.ZoneRear ? ringK++ : bandK[z]++;
-
-                    // A rejoined survivor sheds the leaderless penalty only on ARRIVAL —
-                    // once it's back within cohesion range of its new leader.
-                    if (w.Leaderless[i] && (w.Pos[lead] - w.Pos[i]).LengthSq <= cohesionR * cohesionR)
-                        w.Leaderless[i] = false;
-
-                    // Attack posture overrides formation-keeping on contact: a member with an
-                    // enemy in acquire range is released so CombatSystem chases and fights.
-                    // (A plain move keeps formation strictly — units march past enemies.)
-                    if (attackPosture && CombatSystem.EnemyInAcquireRange(w, defs, i))
-                    {
-                        w.HasMoveOrder[i] = false;
-                        w.Settled[i] = false;
-                        continue;
-                    }
-
-                    FixVec2 slot;
-                    if (encircling)
-                    {
-                        slot = EncircleSlot(z, k);
-                    }
-                    else
-                    {
-                        Offsets(z, k, out Fix fwd, out Fix po);
-                        slot = w.ClampToMap(w.Pos[lead] + f * (fwd - meanFwd) + perp * (po - meanPerp));
-                    }
-
-                    Fix slotSq = (slot - w.Pos[i]).LengthSq;
-                    if (leadMoving || slotSq > regroupR * regroupR) w.Settled[i] = false;
-                    if (w.Settled[i]) { w.HasMoveOrder[i] = false; continue; }
-
-                    if (slotSq > slack * slack)
-                    {
-                        // Touching the standing leader counts as arrived — rest on contact.
-                        Fix touch = leadR + Fix.Ratio(defs.Units[w.DefIndex[i]].CollisionRadiusCenti + 10, 100);
-                        if (!leadMoving && (w.Pos[lead] - w.Pos[i]).LengthSq <= touch * touch)
-                        {
-                            w.HasMoveOrder[i] = false;
-                            w.Settled[i] = true;
-                        }
-                        else
-                        {
-                            w.MoveTarget[i] = slot;
-                            w.HasMoveOrder[i] = true;
-                        }
-                    }
-                    else
-                    {
-                        w.HasMoveOrder[i] = false;
-                        if (!leadMoving) w.Settled[i] = true;
-                    }
-                }
-            }
-        }
-
-        /// <summary>A non-leader unit in lead's squad (sub-leaders are limbs, not members).</summary>
-        private static bool IsMemberOf(SimWorld w, DefDatabase defs, int i, int lead) =>
-            w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !defs.Units[w.DefIndex[i]].IsLeader;
-
-        /// <summary>Nearest enemy unit/building within maxR of a point (lowest index on ties) —
-        /// the target an enemy-anchored formation acts on.</summary>
-        private static int NearestEnemy(SimWorld w, byte owner, FixVec2 from, Fix maxR)
-        {
-            int best = -1;
-            Fix bestSq = Fix.Zero;
-            Fix maxSq = maxR * maxR;
-            int cx0 = w.GridClampX((int)((from.X - maxR).Raw >> SimWorld.GridShift));
-            int cx1 = w.GridClampX((int)((from.X + maxR).Raw >> SimWorld.GridShift));
-            int cy0 = w.GridClampY((int)((from.Y - maxR).Raw >> SimWorld.GridShift));
-            int cy1 = w.GridClampY((int)((from.Y + maxR).Raw >> SimWorld.GridShift));
-            for (int cy = cy0; cy <= cy1; cy++)
-            for (int cx = cx0; cx <= cx1; cx++)
-            for (int j = w.GridHead[cy * w.GridCellsX + cx]; j >= 0; j = w.GridNext[j])
-            {
-                if (w.Kind[j] != EntityKind.Unit && w.Kind[j] != EntityKind.Building) continue;
-                if (!w.AreEnemies(owner, w.Owner[j])) continue; // allies and neutrals aren't targets
-                Fix dsq = (w.Pos[j] - from).LengthSq;
-                if (dsq > maxSq) continue;
-                if (best < 0 || dsq < bestSq || (dsq == bestSq && j < best)) { best = j; bestSq = dsq; }
-            }
-            return best;
-        }
-
-        public static int NearestLeaderWithCapacity(SimWorld w, DefDatabase defs, int self, int[] squadCounts)
-        {
-            int best = -1;
-            Fix bestSq = Fix.Zero;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (i == self || w.Kind[i] != EntityKind.Unit || w.Owner[i] != w.Owner[self]) continue;
-                if (!defs.Units[w.DefIndex[i]].IsLeader) continue;
-                if (squadCounts[i] >= w.Rules.MaxUnitsPerLeader) continue;
-                Fix dsq = (w.Pos[i] - w.Pos[self]).LengthSq;
-                if (best < 0 || dsq < bestSq) { best = i; bestSq = dsq; }
-            }
-            return best;
-        }
-
-        /// <summary>Recomputes squad counts before searching — for rare paths (production).</summary>
-        public static int NearestLeaderWithCapacityFresh(SimWorld w, DefDatabase defs, int self)
-        {
-            int[] squad = RecountSquads(w, defs);
-            return NearestLeaderWithCapacity(w, defs, self, squad);
-        }
-
-        /// <summary>Nearest friendly leader with room within maxDist of a point (rally-to-swarm).</summary>
-        public static int NearestLeaderWithCapacityNearPoint(SimWorld w, DefDatabase defs, byte owner, FixVec2 point, Fix maxDist)
-        {
-            int[] squad = RecountSquads(w, defs);
-            int best = -1;
-            Fix bestSq = Fix.Zero;
-            Fix maxSq = maxDist * maxDist;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != owner) continue;
-                if (!defs.Units[w.DefIndex[i]].IsLeader) continue;
-                if (squad[i] >= w.Rules.MaxUnitsPerLeader) continue;
-                Fix dsq = (w.Pos[i] - point).LengthSq;
-                if (dsq > maxSq) continue;
-                if (best < 0 || dsq < bestSq) { best = i; bestSq = dsq; }
-            }
-            return best;
-        }
-
-        private static int[] RecountSquads(SimWorld w, DefDatabase defs)
-        {
-            // Members only — linked sub-leaders (limbs) must NOT consume member capacity,
-            // matching pass 1 and the AssignToLeader command. Counting them made primes read
-            // as full and silently blocked production auto-assimilation.
-            int[] squad = w.ScratchSquadCount;
-            Array.Clear(squad, 0, w.HighWater);
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] >= 0 && w.Leader[i] < w.HighWater
-                    && !defs.Units[w.DefIndex[i]].IsLeader)
-                    squad[w.Leader[i]]++;
-            return squad;
         }
     }
 
@@ -1020,30 +474,25 @@ namespace Petri.Core
         public static Fix PerTickStep(int moveSpeedCenti) => Fix.Ratio(moveSpeedCenti, 100 * SimConstants.TicksPerSecond);
 
         /// <summary>
-        /// Turn a unit's body facing toward a direction at its def's turn speed. Leaders only
-        /// turn when their facing isn't HELD — an explicitly ordered front (drag-line or
-        /// Shift+R-drag) survives the march; otherwise the whole squad orients along its
-        /// travel direction. Facing is hashed state and drives directional damage.
+        /// Turn a unit's body facing toward a direction at its def's turn speed. Only runs
+        /// while a unit moves, builds, or fights — an idle unit keeps its facing (so an
+        /// ordered SetFacing holds until the next activity). Facing is hashed state and
+        /// drives directional damage.
         /// </summary>
         public static void FaceToward(SimWorld w, DefDatabase defs, int i, FixVec2 toward)
         {
             var def = defs.Units[w.DefIndex[i]];
-            // Leaders keep an explicitly ordered front; linked limbs inherit their prime's
-            // facing (pass 3a) — neither turns toward mere travel.
-            if (def.IsLeader && (w.FacingHeld[i] || w.Leader[i] >= 0)) return;
             Fix chord = Fix.Ratio(def.TurnSpeedCenti, 100 * SimConstants.TicksPerSecond);
             w.Facing[i] = FixVec2.TurnTowards(w.Facing[i], toward, chord);
         }
 
-        /// <summary>Per-tick step for a specific unit, with the leaderless penalty folded in
-        /// as a single rational so there is still only one floor.</summary>
+        /// <summary>Per-tick step for a specific unit with upgrade rationals folded in
+        /// as a single division (one floor).</summary>
         public static Fix StepFor(SimWorld w, DefDatabase defs, int e)
         {
             var def = defs.Units[w.DefIndex[e]];
             long num = 1, den = 1;
-            if (w.Leaderless[e]) { num *= w.Rules.LeaderlessPenaltyNum; den *= w.Rules.LeaderlessPenaltyDen; }
             UpgradeSystem.Fold(w, defs, w.Owner[e], w.DefIndex[e], UpgradeStat.MoveSpeed, ref num, ref den);
-            // Combine every rational factor, then divide once (one floor).
             return Fix.Ratio((long)def.MoveSpeedCenti * num, 100L * SimConstants.TicksPerSecond * den);
         }
 
@@ -1053,8 +502,6 @@ namespace Petri.Core
             {
                 if (w.Kind[i] != EntityKind.Unit || !w.HasMoveOrder[i]) continue;
                 Fix step = StepFor(w, defs, i);
-                long cap = w.ScratchStepCap[i];
-                if (cap > 0 && cap < step.Raw) step = Fix.FromRaw(cap); // arrive-as-one pacing
                 FaceToward(w, defs, i, w.MoveTarget[i] - w.Pos[i]);
                 w.Pos[i] = FixVec2.MoveTowards(w.Pos[i], w.MoveTarget[i], step, out bool arrived);
                 if (arrived)
@@ -1184,7 +631,7 @@ namespace Petri.Core
     /// <summary>
     /// Auto-engagement combat: armed units acquire the nearest enemy in range (lowest index
     /// wins ties), attack when in reach, and chase only when the unit has no standing move
-    /// order. Leaderless units attack 25% slower (longer cooldown, one integer floor).
+    /// order.
     /// </summary>
     public static class CombatSystem
     {
@@ -1192,38 +639,9 @@ namespace Petri.Core
         {
             var def = defs.Units[w.DefIndex[e]];
             long num = 1, den = 1;
-            // Leaderless attacks are SLOWER: cooldown ×Den/Num (penalty rational inverted).
-            if (w.Leaderless[e]) { num *= w.Rules.LeaderlessPenaltyDen; den *= w.Rules.LeaderlessPenaltyNum; }
             // Attack-speed upgrades shorten the cooldown (their Num<Den).
             UpgradeSystem.Fold(w, defs, w.Owner[e], w.DefIndex[e], UpgradeStat.AttackSpeed, ref num, ref den);
             return (int)((long)def.AttackCooldownTicks * num / den);
-        }
-
-        /// <summary>Any enemy unit/building within this unit's acquire reach? Used by the swarm
-        /// system to release squad members from formation-keeping when their squad is in
-        /// attack posture — the same range combat targeting uses, so a released unit always
-        /// has something to fight.</summary>
-        public static bool EnemyInAcquireRange(SimWorld w, DefDatabase defs, int e)
-        {
-            var def = defs.Units[w.DefIndex[e]];
-            if (def.AttackDamage <= 0) return false;
-            Fix selfR = Fix.Ratio(def.CollisionRadiusCenti, 100);
-            Fix acquire = Fix.Ratio(UpgradeSystem.ScaleCenti(w, defs, w.Owner[e], w.DefIndex[e], def.AcquireRangeCenti, UpgradeStat.AcquireRange), 100);
-            Fix reach = acquire + selfR + w.MaxInteractRadius;
-            int cx0 = w.GridClampX((int)((w.Pos[e].X - reach).Raw >> SimWorld.GridShift));
-            int cx1 = w.GridClampX((int)((w.Pos[e].X + reach).Raw >> SimWorld.GridShift));
-            int cy0 = w.GridClampY((int)((w.Pos[e].Y - reach).Raw >> SimWorld.GridShift));
-            int cy1 = w.GridClampY((int)((w.Pos[e].Y + reach).Raw >> SimWorld.GridShift));
-            for (int cy = cy0; cy <= cy1; cy++)
-            for (int cx = cx0; cx <= cx1; cx++)
-            for (int j = w.GridHead[cy * w.GridCellsX + cx]; j >= 0; j = w.GridNext[j])
-            {
-                if (j == e || !w.AreEnemies(w.Owner[e], w.Owner[j])) continue;
-                if (w.Kind[j] != EntityKind.Unit && w.Kind[j] != EntityKind.Building) continue;
-                Fix maxD = acquire + selfR + CollisionSystem.RadiusOf(w, defs, j);
-                if ((w.Pos[j] - w.Pos[e]).LengthSq <= maxD * maxD) return true;
-            }
-            return false;
         }
 
         /// <summary>
@@ -1254,32 +672,27 @@ namespace Petri.Core
         }
 
         /// <summary>
-        /// Effective attack damage against a specific target. Two rational factors combined
-        /// with ONE integer floor (iron rule): the squad bonus (in a squad AND within cohesion
-        /// range of the leader), and the directional multiplier — unit victims struck from the
-        /// side or rear take extra damage based on THEIR facing vs the attacker's position.
-        /// Buildings have no facing and take flat damage. Turn speed + formation facing now
+        /// Effective attack damage against a specific target. Rational factors combined
+        /// with ONE integer floor (iron rule): the leader aura bonus (standing within a
+        /// friendly leader's aura), and the directional multiplier — unit victims struck
+        /// from the side or rear take extra damage based on THEIR facing vs the attacker's
+        /// position. Buildings have no facing and take flat damage. Turn speed and facing
         /// decide fights: a pincer's flanks genuinely hit harder.
         /// </summary>
         public static int DamageOf(SimWorld w, DefDatabase defs, int e, int target)
         {
             // Base attack, plus the owner's standing attack structures. Added BEFORE the
-            // rationals, so it is a genuine stat boost that squad/arc bonuses scale too.
+            // rationals, so it is a genuine stat boost that aura/arc bonuses scale too.
             // Unarmed units never reach here (the combat loop skips AttackDamage <= 0), so
             // this can't hand workers a weapon.
             int dmg = defs.Units[w.DefIndex[e]].AttackDamage;
             if (w.Owner[e] < w.ScratchAttackBonus.Length) dmg += w.ScratchAttackBonus[w.Owner[e]];
             long num = 1, den = 1;
 
-            int lead = w.Leader[e];
-            if (lead >= 0)
+            if (w.ScratchLeaderAura[e])
             {
-                Fix r = Fix.Ratio(w.Rules.SquadCohesionRadiusCenti, 100);
-                if ((w.Pos[lead] - w.Pos[e]).LengthSq <= r * r)
-                {
-                    num *= w.Rules.SquadDamageBonusNum;
-                    den *= w.Rules.SquadDamageBonusDen;
-                }
+                num *= w.Rules.LeaderAuraBonusNum;
+                den *= w.Rules.LeaderAuraBonusDen;
             }
 
             if (w.Kind[target] == EntityKind.Unit)
@@ -1378,9 +791,9 @@ namespace Petri.Core
                 }
                 if (target < 0)
                 {
-                    // No enemy in range. An attack-moving unit (not a squad member — its leader
-                    // drives it) advances toward its destination; when it arrives the order ends.
-                    if (w.AttackMove[i] && !w.HasMoveOrder[i] && w.Leader[i] < 0)
+                    // No enemy in range. An attack-moving unit advances toward its
+                    // destination; when it arrives the order ends.
+                    if (w.AttackMove[i] && !w.HasMoveOrder[i])
                     {
                         MovementSystem.FaceToward(w, defs, i, w.MoveTarget[i] - w.Pos[i]);
                         w.Pos[i] = FixVec2.MoveTowards(w.Pos[i], w.MoveTarget[i], MovementSystem.StepFor(w, defs, i), out bool arrived);
@@ -1415,7 +828,7 @@ namespace Petri.Core
 
             // ---- TIERED CACHE DEFENSE: an upgraded supply cache (Tier >= 1) fires a ranged
             // shot at the nearest enemy in range. Static defense with flat rules-driven damage
-            // — no arcs, squad bonuses, or supply modifiers.
+            // — no arcs, aura bonuses, or supply modifiers.
             Fix cacheRange = Fix.Ratio(w.Rules.CacheAttackRangeCenti, 100);
             for (int i = 0; i < w.HighWater; i++)
             {
@@ -1464,7 +877,7 @@ namespace Petri.Core
             // BFS the supply chain per player from its headquarters, over supply buildings.
             bool[] connected = w.ScratchConnected;
             Array.Clear(connected, 0, w.HighWater);
-            int[] queue = w.ScratchRoot; // reused scratch; SwarmSystem is done with it this tick
+            int[] queue = w.ScratchQueue; // reused scratch (LeaderAuraSystem borrows it later in the tick)
             int head = 0, tail = 0;
             Fix link = Fix.Ratio(w.Rules.SupplyLinkRangeCenti, 100);
             Fix linkSq = link * link;

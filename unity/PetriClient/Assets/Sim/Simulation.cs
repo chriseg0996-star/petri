@@ -33,11 +33,11 @@ namespace Petri.Core
                 _cursor++;
             }
             ProductionSystem.Tick(World, Defs);
-            SwarmSystem.Tick(World, Defs);
             WorkerSystem.Tick(World, Defs);
             MovementSystem.Tick(World, Defs);
             CollisionSystem.Tick(World, Defs);
             SupplySystem.Tick(World, Defs);
+            LeaderAuraSystem.Tick(World, Defs); // post-movement positions; combat reads the aura
             CombatSystem.Tick(World, Defs);
             CleanupSystem.Tick(World, Defs);
             World.TickCount++;
@@ -152,26 +152,13 @@ namespace Petri.Core
                 Mix((ulong)w.NodeFood[i]);
                 Mix(w.NodeMineral[i] ? 1UL : 0UL);
                 Mix(w.CarryMineral[i] ? 1UL : 0UL);
-                Mix((ulong)w.Leader[i]);
-                Mix(w.SiblingOrdinal[i]);
-                Mix(w.Leaderless[i] ? 1UL : 0UL);
-                Mix(w.Settled[i] ? 1UL : 0UL);
-                Mix(w.SeekingSwarm[i] ? 1UL : 0UL);
-                Mix(w.MoveAsOne[i] ? 1UL : 0UL);
                 Mix((ulong)w.SupplyTicks[i]);
                 Mix(w.Tier[i]);
                 Mix((ulong)w.DepotStock[i]);
                 Mix((ulong)w.CaravanCache[i]);
                 Mix(w.Dial[i]);
-                Mix(w.Stance[i] ? 1UL : 0UL);
-                for (int u = 0; u < w.UnitDefCount; u++) Mix(w.ZoneMatrix[i * w.UnitDefCount + u]);
                 Mix((ulong)w.Facing[i].X.Raw);
                 Mix((ulong)w.Facing[i].Y.Raw);
-                Mix(w.FacingHeld[i] ? 1UL : 0UL);
-                Mix(w.HasLimbStation[i] ? 1UL : 0UL);
-                Mix((ulong)w.LimbStation[i].X.Raw);
-                Mix((ulong)w.LimbStation[i].Y.Raw);
-                Mix(w.AutoAssimilate[i] ? 1UL : 0UL);
                 Mix((ulong)w.Generation[i]);
             }
             return h;
@@ -187,7 +174,7 @@ namespace Petri.Core
                 throw new System.ArgumentException("map " + map.Name + " has only " + map.Spawns.Length + " spawns");
 
             var w = new SimWorld(defs.Rules, playerCount, defs.Units.Length, defs.Upgrades.Length,
-                Fix.Ratio(map.WidthCenti, 100), Fix.Ratio(map.HeightCenti, 100), seed, defs.BuildDefaultZones());
+                Fix.Ratio(map.WidthCenti, 100), Fix.Ratio(map.HeightCenti, 100), seed);
 
             // Largest possible entity radius — pads grid range queries so no pair is missed.
             int maxCenti = defs.Rules.NodeRadiusCenti;

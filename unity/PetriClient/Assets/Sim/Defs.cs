@@ -7,21 +7,12 @@ namespace Petri.Core
     {
         public const int TicksPerSecond = 20;
 
-        // Formation zones: where a unit type stands within its squad. Players assign each
-        // unit def to a zone per squad (the placement matrix); layouts are built in code.
-        public const int ZoneFront = 0;   // concentrated ranks ahead of the leader
-        public const int ZoneRear = 1;    // ranks behind the leader
-        public const int ZoneFlanks = 2;  // mirrored at both ends of the line
-        public const int ZoneSpread = 3;  // interleaved evenly through front and rear
-        public const int ZoneGuard = 4;   // ring around the leader
-        public const int ZoneCount = 5;
-
         // Shift-queued orders: waypoints held per unit, started one by one as each order
         // completes. Kinds mirror the command that was queued.
+        // Byte 3 is RESERVED (was OrderFormationMove) — old logs may carry it.
         public const int MaxOrderQueue = 16;
         public const byte OrderMove = 1;
         public const byte OrderAttackMove = 2;
-        public const byte OrderFormationMove = 3;
     }
 
     /// <summary>Global match rules, loaded from data/rules.json. Integers only.</summary>
@@ -31,21 +22,11 @@ namespace Petri.Core
         public int StartingFood = 200;
         public int StartingWorkers = 6;
         public int NodeRadiusCenti = 60;
-        public int MaxUnitsPerLeader = 15;
-        public int MaxLeadersPerPlayer = 9;    // battalion + squad leaders combined
-        public int MaxSquadsPerBattalion = 9;  // prime + limbs; single digits address every squad
-        public int SwarmJoinRadiusCenti = 400;
-        // Settled members knocked farther than this off their slot wake up and regroup
-        // (deliberately separate from the join radius, which can be map-wide).
-        public int RegroupRadiusCenti = 400;
-        // Leaderless units move and attack at Num/Den speed (3/4 = -25%).
-        public int LeaderlessPenaltyNum = 3;
-        public int LeaderlessPenaltyDen = 4;
-        // Units in a squad (under a living leader) deal Num/Den damage (5/4 = +25%)...
-        public int SquadDamageBonusNum = 5;
-        public int SquadDamageBonusDen = 4;
-        // ...but only while within cohesion range of their leader (formation-keeping matters).
-        public int SquadCohesionRadiusCenti = 600;
+        // The leader's command aura: friendly units within the radius of a live same-owner
+        // leader deal Num/Den damage (5/4 = +25%). The bonus does not stack.
+        public int LeaderAuraBonusNum = 5;
+        public int LeaderAuraBonusDen = 4;
+        public int LeaderAuraRadiusCenti = 600;
         // Directional combat: units hit from outside their front arc take extra damage.
         // Arc boundaries are cosines as rationals (1/2 = ±60° cones front and rear).
         public int FrontArcCosNum = 1;
@@ -56,20 +37,6 @@ namespace Petri.Core
         public int SideDamageDen = 4;
         public int RearDamageNum = 3;  // 3/2 = +50% from behind
         public int RearDamageDen = 2;
-        // Station spacing between a prime leader and its linked sub-leaders (super-swarm limbs).
-        public int LinkSpacingCenti = 500;
-        // How far a squad scans for the enemy that enemy-anchored formations (Encircle) act on.
-        public int EnemyAnchorRangeCenti = 1500;
-        // Formation zone layout (all tunable data): row block offsets/widths, flank stations,
-        // and the guard ring around the leader.
-        public int ZoneFrontForwardCenti = 160;
-        public int ZoneRearForwardCenti = -110;
-        public int ZoneRowWidth = 6;
-        public int ZoneSpacingCenti = 85;
-        public int ZoneRankSpacingCenti = 75;
-        public int ZoneFlankSideCenti = 300;
-        public int ZoneGuardRadiusCenti = 130;
-        public int ZoneGuardGapCenti = 85;
         // LOGISTICS: supply buildings project supplyRadius while CONNECTED to an HQ through a
         // chain of supply buildings each within linkRange of the next — the chain is the
         // raidable supply line. Units carry a grace reservoir that drains outside supply;
@@ -116,8 +83,7 @@ namespace Petri.Core
 
     /// <summary>
     /// A unit archetype. All distances are centi-units (1/100 of a world unit) and all rates
-    /// are integer ticks, so defs stay pure-integer JSON. Role scores drive data-driven
-    /// formation band assignment (tank/damage/speed/range/support).
+    /// are integer ticks, so defs stay pure-integer JSON.
     /// </summary>
     public sealed class UnitDef
     {
@@ -138,15 +104,9 @@ namespace Petri.Core
         public int FoodCost;
         public int BuildTimeTicks;
         public bool IsWorker;
-        public bool IsLeader;             // swarm leader: commands a squad, backbone of formations
-        public byte DefaultZone = SimConstants.ZoneFront; // where fresh squads place this type
+        public bool IsLeader;             // aura unit: nearby friendlies within LeaderAuraRadius hit harder
         public int CarryCapacity;
         public int GatherTicks;
-        public int TankScore;
-        public int DamageScore;
-        public int SpeedScore;
-        public int RangeScore;
-        public int SupportScore;
     }
 
     public sealed class BuildingDef
@@ -259,15 +219,6 @@ namespace Petri.Core
                 up.AffectsUnit = new bool[Units.Length];
                 for (int k = 0; k < up.Affects.Length; k++) up.AffectsUnit[UnitIndex(up.Affects[k])] = true;
             }
-        }
-
-        /// <summary>Per-unit-def default zones, the template every fresh leader's placement
-        /// matrix starts from.</summary>
-        public byte[] BuildDefaultZones()
-        {
-            var zones = new byte[Units.Length];
-            for (int u = 0; u < Units.Length; u++) zones[u] = Units[u].DefaultZone;
-            return zones;
         }
 
         public int UnitIndex(string id) => _unitIndex.TryGetValue(id, out int i) ? i : throw new KeyNotFoundException("unknown unit def: " + id);

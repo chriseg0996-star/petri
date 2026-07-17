@@ -19,12 +19,9 @@ namespace Petri.Client
         [Serializable] private class RulesDto
         {
             public int maxEntities, startingFood, startingWorkers, nodeRadiusCenti;
-            public int maxUnitsPerLeader, maxLeadersPerPlayer, maxSquadsPerBattalion, swarmJoinRadiusCenti, regroupRadiusCenti, leaderlessPenaltyNum, leaderlessPenaltyDen;
-            public int squadDamageBonusNum, squadDamageBonusDen, squadCohesionRadiusCenti, linkSpacingCenti, enemyAnchorRangeCenti;
+            public int leaderAuraBonusNum, leaderAuraBonusDen, leaderAuraRadiusCenti;
             public int frontArcCosNum, frontArcCosDen, rearArcCosNum, rearArcCosDen;
             public int sideDamageNum, sideDamageDen, rearDamageNum, rearDamageDen;
-            public int zoneFrontForwardCenti, zoneRearForwardCenti, zoneRowWidth, zoneSpacingCenti;
-            public int zoneRankSpacingCenti, zoneFlankSideCenti, zoneGuardRadiusCenti, zoneGuardGapCenti;
             public int supplyRadiusCenti, supplyLinkRangeCenti, supplyGraceTicks, unsuppliedDamageNum, unsuppliedDamageDen, supplyDrainTicks;
             public int cacheMaxTier, cacheUpgradeFoodCost, cacheAttackDamage, cacheAttackRangeCenti, cacheAttackCooldownTicks, cacheProjectileSpeedCenti;
             public int unitVisionRangeCenti, buildingVisionRangeCenti;
@@ -42,9 +39,7 @@ namespace Petri.Client
             public int maxHp, moveSpeedCenti, collisionRadiusCenti, pushStrength, pushResistance;
             public int attackDamage, attackRangeCenti, acquireRangeCenti, attackCooldownTicks, projectileSpeedCenti, turnSpeedCenti;
             public int foodCost, buildTimeTicks, carryCapacity, gatherTicks;
-            public int tankScore, damageScore, speedScore, rangeScore, supportScore;
             public bool isWorker, isLeader;
-            public string zone;
         }
 
         [Serializable] private class BuildingDto
@@ -130,18 +125,9 @@ namespace Petri.Client
             StartingFood = d.startingFood,
             StartingWorkers = d.startingWorkers,
             NodeRadiusCenti = d.nodeRadiusCenti > 0 ? d.nodeRadiusCenti : 60,
-            MaxUnitsPerLeader = d.maxUnitsPerLeader > 0 ? d.maxUnitsPerLeader : 15,
-            MaxLeadersPerPlayer = d.maxLeadersPerPlayer > 0 ? d.maxLeadersPerPlayer : 9,
-            MaxSquadsPerBattalion = d.maxSquadsPerBattalion > 0 ? d.maxSquadsPerBattalion : 9,
-            SwarmJoinRadiusCenti = d.swarmJoinRadiusCenti > 0 ? d.swarmJoinRadiusCenti : 400,
-            RegroupRadiusCenti = d.regroupRadiusCenti > 0 ? d.regroupRadiusCenti : 400,
-            LeaderlessPenaltyNum = d.leaderlessPenaltyNum > 0 ? d.leaderlessPenaltyNum : 3,
-            LeaderlessPenaltyDen = d.leaderlessPenaltyDen > 0 ? d.leaderlessPenaltyDen : 4,
-            SquadDamageBonusNum = d.squadDamageBonusNum > 0 ? d.squadDamageBonusNum : 5,
-            SquadDamageBonusDen = d.squadDamageBonusDen > 0 ? d.squadDamageBonusDen : 4,
-            SquadCohesionRadiusCenti = d.squadCohesionRadiusCenti > 0 ? d.squadCohesionRadiusCenti : 600,
-            LinkSpacingCenti = d.linkSpacingCenti > 0 ? d.linkSpacingCenti : 500,
-            EnemyAnchorRangeCenti = d.enemyAnchorRangeCenti > 0 ? d.enemyAnchorRangeCenti : 1500,
+            LeaderAuraBonusNum = d.leaderAuraBonusNum > 0 ? d.leaderAuraBonusNum : 5,
+            LeaderAuraBonusDen = d.leaderAuraBonusDen > 0 ? d.leaderAuraBonusDen : 4,
+            LeaderAuraRadiusCenti = d.leaderAuraRadiusCenti > 0 ? d.leaderAuraRadiusCenti : 600,
             FrontArcCosNum = d.frontArcCosNum > 0 ? d.frontArcCosNum : 1,
             FrontArcCosDen = d.frontArcCosDen > 0 ? d.frontArcCosDen : 2,
             RearArcCosNum = d.rearArcCosNum > 0 ? d.rearArcCosNum : 1,
@@ -150,14 +136,6 @@ namespace Petri.Client
             SideDamageDen = d.sideDamageDen > 0 ? d.sideDamageDen : 4,
             RearDamageNum = d.rearDamageNum > 0 ? d.rearDamageNum : 3,
             RearDamageDen = d.rearDamageDen > 0 ? d.rearDamageDen : 2,
-            ZoneFrontForwardCenti = d.zoneFrontForwardCenti != 0 ? d.zoneFrontForwardCenti : 160,
-            ZoneRearForwardCenti = d.zoneRearForwardCenti != 0 ? d.zoneRearForwardCenti : -110,
-            ZoneRowWidth = d.zoneRowWidth > 0 ? d.zoneRowWidth : 6,
-            ZoneSpacingCenti = d.zoneSpacingCenti > 0 ? d.zoneSpacingCenti : 85,
-            ZoneRankSpacingCenti = d.zoneRankSpacingCenti > 0 ? d.zoneRankSpacingCenti : 75,
-            ZoneFlankSideCenti = d.zoneFlankSideCenti > 0 ? d.zoneFlankSideCenti : 300,
-            ZoneGuardRadiusCenti = d.zoneGuardRadiusCenti > 0 ? d.zoneGuardRadiusCenti : 130,
-            ZoneGuardGapCenti = d.zoneGuardGapCenti > 0 ? d.zoneGuardGapCenti : 85,
             SupplyRadiusCenti = d.supplyRadiusCenti > 0 ? d.supplyRadiusCenti : 1800,
             SupplyLinkRangeCenti = d.supplyLinkRangeCenti > 0 ? d.supplyLinkRangeCenti : 3000,
             SupplyGraceTicks = d.supplyGraceTicks > 0 ? d.supplyGraceTicks : 600,
@@ -189,22 +167,8 @@ namespace Petri.Client
             ProjectileSpeedCenti = d.projectileSpeedCenti,
             TurnSpeedCenti = d.turnSpeedCenti > 0 ? d.turnSpeedCenti : 600,
             FoodCost = d.foodCost, BuildTimeTicks = d.buildTimeTicks, IsWorker = d.isWorker, IsLeader = d.isLeader,
-            DefaultZone = ParseZone(d.zone),
             CarryCapacity = d.carryCapacity, GatherTicks = d.gatherTicks,
-            TankScore = d.tankScore, DamageScore = d.damageScore, SpeedScore = d.speedScore, RangeScore = d.rangeScore, SupportScore = d.supportScore,
         };
-
-        private static byte ParseZone(string zone)
-        {
-            switch (zone)
-            {
-                case "rear": return SimConstants.ZoneRear;
-                case "flanks": return SimConstants.ZoneFlanks;
-                case "spread": return SimConstants.ZoneSpread;
-                case "guard": return SimConstants.ZoneGuard;
-                default: return SimConstants.ZoneFront;
-            }
-        }
 
         private static BuildingDef ToBuilding(BuildingDto d) => new BuildingDef
         {

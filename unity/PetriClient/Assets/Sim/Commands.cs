@@ -5,35 +5,29 @@ namespace Petri.Core
 {
     public enum CommandType : byte
     {
-        // Move/AttackMove/Stop REJECT on squad members (Leader >= 0): a squad acts as one
-        // body driven by its leader — players command formations, not individual soldiers.
-        // Move/AttackMove/FormationMove: D = 1 queues the order behind the active one
-        // (shift-click); D = 0 replaces everything, wiping the queue.
+        // Every unit obeys direct orders — classic RTS control. Move/AttackMove: D = 1
+        // queues the order behind the active one (shift-click); D = 0 replaces everything.
+        //
+        // RESERVED ids — the removed swarm-era commands (AssignToLeader = 4,
+        // FormationMove = 5, SetLimbStation = 11, SetAutoAssimilate = 12,
+        // SetMoveAsOne = 13, SetUnitZone = 14, SetStance = 15, SetSiblingOrdinal = 23).
+        // Never reuse these numbers: old logs/peers may still emit them, and they must
+        // land in the default Reject, not silently mean something new.
         Move = 1,                // A = entity, B = xCenti, C = yCenti, D = queue flag
         Stop = 2,                // A = entity
         SetProductionWeight = 3, // A = unit dense index, B = weight (>= 0)
-        AssignToLeader = 4,      // A = unit, B = leader entity
-        FormationMove = 5,       // A = leader, B = xCenti, C = yCenti, D = queue flag
         SetProduceOverride = 6,  // A = building, B = unit dense index to produce exclusively, -1 = auto
         SetRally = 7,            // A = building, B = xCenti, C = yCenti, D = 1 set / 0 clear
         ConstructBuilding = 8,   // A = worker, B = xCenti, C = yCenti, D = building dense index
         SetProducePaused = 9,    // A = building, B = 1 pause / 0 resume
         AttackMove = 10,         // A = unit, B = xCenti, C = yCenti (advance, engaging enemies)
-        SetLimbStation = 11,     // A = linked leader, B = forwardCenti, C = sideCenti (prime frame)
-        SetAutoAssimilate = 12,  // A = building, B = 1 join nearest swarm / 0 stay loose
-        SetMoveAsOne = 13,       // A = leader, B = 1 pace swarm to slowest unit / 0 own speeds
-        SetUnitZone = 14,        // A = leader, B = unit def index, C = zone (SimConstants.Zone*)
-        SetStance = 15,          // A = leader, B = 1 Encircle (wrap nearest enemy) / 0 formation
-        SetFacing = 16,          // A = unit, B/C = direction vector (centi); leaders hold it as
-                                 //   the formation front until the next move order
+        SetFacing = 16,          // A = unit, B/C = direction vector (centi); holds while idle
         SetSupplyPriority = 17,  // A = 0..100: core-focused workers vs caravans to the front
         SetDial = 18,            // A = entity, B = 0..100: per-entity tuning dial (future modifiers)
         AssignBuild = 19,        // A = worker, B = construction site: (re)join the build crew
         UpgradeCache = 20,       // A = supply cache: buy the next tier (2x stock/HP, 1/2 drain, armed)
         BuyUpgrade = 21,         // A = upgrade dense index: purchase a tech-path upgrade
         BuildProng = 22,         // A = headquarters entity, B = hub-built building dense index
-        SetSiblingOrdinal = 23,  // A = leader, B = target ordinal — swaps positions with the
-                                 //   sibling currently holding B (battalion or squad number)
     }
 
     /// <summary>
@@ -49,8 +43,8 @@ namespace Petri.Core
         public int B;
         public int C;
         public int D;
-        public int E; // optional facing x (centi) for FormationMove line drags
-        public int F; // optional facing y (centi)
+        public int E; // reserved (was FormationMove facing x) — keeps the wire shape stable
+        public int F; // reserved (was FormationMove facing y)
     }
 
     /// <summary>
@@ -87,7 +81,7 @@ namespace Petri.Core
             {
                 case CommandType.Move:
                 {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || w.Leader[c.A] >= 0) { Reject(w); return; }
+                    if (!IsOwnedUnit(w, c.A, c.Player)) { Reject(w); return; }
                     var target = w.ClampToMap(new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100)));
                     if (TryQueue(w, c, SimConstants.OrderMove, target)) return;
                     w.QueueCount[c.A] = 0; // a direct order replaces the whole plan
@@ -96,7 +90,7 @@ namespace Petri.Core
                 }
                 case CommandType.AttackMove:
                 {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || w.Leader[c.A] >= 0) { Reject(w); return; }
+                    if (!IsOwnedUnit(w, c.A, c.Player)) { Reject(w); return; }
                     var target = w.ClampToMap(new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100)));
                     if (TryQueue(w, c, SimConstants.OrderAttackMove, target)) return;
                     w.QueueCount[c.A] = 0;
@@ -105,12 +99,10 @@ namespace Petri.Core
                 }
                 case CommandType.Stop:
                 {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || w.Leader[c.A] >= 0) { Reject(w); return; }
+                    if (!IsOwnedUnit(w, c.A, c.Player)) { Reject(w); return; }
                     w.HasMoveOrder[c.A] = false;
                     w.AttackMove[c.A] = false;
                     w.QueueCount[c.A] = 0; // stop scraps the queued plan too
-                    w.SeekingSwarm[c.A] = false; // the player took manual control
-                    w.FacingHeld[c.A] = false;
                     w.BuildTask[c.A] = -1;
                     w.MoveTarget[c.A] = w.Pos[c.A];
                     return;
@@ -119,78 +111,6 @@ namespace Petri.Core
                 {
                     if (c.A < 0 || c.A >= defs.Units.Length || c.B < 0) { Reject(w); return; }
                     w.Players[c.Player].ProductionWeights[c.A] = c.B;
-                    return;
-                }
-                case CommandType.AssignToLeader:
-                {
-                    if (!IsOwnedUnit(w, c.A, c.Player)) { Reject(w); return; }
-                    var unitDef = defs.Units[w.DefIndex[c.A]];
-                    if (unitDef.IsWorker) { Reject(w); return; }
-
-                    // B == -1: a leader unlinks its squad from the larger swarm.
-                    if (c.B == -1)
-                    {
-                        if (!unitDef.IsLeader || w.Leader[c.A] < 0) { Reject(w); return; }
-                        w.Leader[c.A] = -1;
-                        w.HasLimbStation[c.A] = false;
-                        w.Settled[c.A] = false;
-                        w.AttackMove[c.A] = false;
-                        w.SiblingOrdinal[c.A] = 0; // becomes the newest (rightmost) battalion
-                        return;
-                    }
-
-                    if (!IsOwnedUnit(w, c.B, c.Player) || c.A == c.B) { Reject(w); return; }
-                    if (!defs.Units[w.DefIndex[c.B]].IsLeader) { Reject(w); return; }
-
-                    if (unitDef.IsLeader)
-                    {
-                        // Leader→leader link: A's squad becomes a limb of battalion B. The
-                        // hierarchy is exactly two levels — battalion prime, then squads — so
-                        // the drill digits (1,n,m) always reach every echelon:
-                        //   · B must itself be a root (no linking under a limb),
-                        //   · A must have no leader children (a prime can't become a limb
-                        //     without unlinking its own limbs first),
-                        //   · the battalion holds at most MaxSquadsPerBattalion squads
-                        //     (prime included).
-                        if (w.Leader[c.B] >= 0) { Reject(w); return; }
-                        int squads = 1; // the prime is squad 1
-                        for (int i = 0; i < w.HighWater; i++)
-                        {
-                            if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
-                            if (w.Leader[i] == c.A) { Reject(w); return; }
-                            if (w.Leader[i] == c.B) squads++;
-                        }
-                        if (squads >= w.Rules.MaxSquadsPerBattalion) { Reject(w); return; }
-                        // Cycles are impossible given the checks above; keep the guard anyway
-                        // (cheap, and defensive against future rule changes).
-                        int cur = c.B, guard = 0;
-                        while (cur >= 0 && guard++ <= w.HighWater)
-                        {
-                            if (cur == c.A) { Reject(w); return; }
-                            cur = w.Leader[cur];
-                        }
-                        w.Leader[c.A] = c.B;
-                        w.Leaderless[c.A] = false;
-                        w.HasLimbStation[c.A] = false; // fresh links start at default stations
-                        w.Settled[c.A] = false;
-                        w.AttackMove[c.A] = false; // posture now flows from the prime
-                        w.QueueCount[c.A] = 0;     // the prime's plan rules now
-                        w.SiblingOrdinal[c.A] = 0; // joins as the newest (rightmost) squad
-                        return;
-                    }
-
-                    // Member join: capacity counts only non-leader members.
-                    int squad = 0;
-                    for (int i = 0; i < w.HighWater; i++)
-                        if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == c.B && !defs.Units[w.DefIndex[i]].IsLeader) squad++;
-                    if (squad >= w.Rules.MaxUnitsPerLeader) { Reject(w); return; }
-                    w.Leader[c.A] = c.B;
-                    // Leaderless is NOT cleared here — a penalized survivor recovers only when
-                    // it physically reaches its new leader (SwarmSystem pass 3b).
-                    w.SeekingSwarm[c.A] = false;
-                    w.Settled[c.A] = false;
-                    w.AttackMove[c.A] = false; // the leader drives the squad from here
-                    w.QueueCount[c.A] = 0;
                     return;
                 }
                 case CommandType.SetProduceOverride:
@@ -205,30 +125,6 @@ namespace Petri.Core
                         if (!producible) { Reject(w); return; }
                     }
                     w.ProduceOverride[c.A] = (short)c.B;
-                    return;
-                }
-                case CommandType.SetLimbStation:
-                {
-                    // A freeform station for a linked squad: where this limb rides relative to
-                    // its prime (forward/side in the prime's facing frame). This is how a drawn
-                    // formation line gives a super-swarm a persistent shape.
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    if (w.Leader[c.A] < 0) { Reject(w); return; } // only linked limbs have stations
-                    w.LimbStation[c.A] = new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100));
-                    w.HasLimbStation[c.A] = true;
-                    w.Settled[c.A] = false; // wake the limb so it walks to its new station
-                    return;
-                }
-                case CommandType.SetMoveAsOne:
-                {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    w.MoveAsOne[c.A] = c.B != 0;
-                    return;
-                }
-                case CommandType.SetAutoAssimilate:
-                {
-                    if (!IsOwnedBuilding(w, c.A, c.Player)) { Reject(w); return; }
-                    w.AutoAssimilate[c.A] = c.B != 0;
                     return;
                 }
                 case CommandType.SetProducePaused:
@@ -300,48 +196,15 @@ namespace Petri.Core
                     w.QueueCount[c.A] = 0;
                     return;
                 }
-                case CommandType.FormationMove:
-                {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    var target = w.ClampToMap(new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100)));
-                    if (TryQueue(w, c, SimConstants.OrderFormationMove, target)) return;
-                    w.QueueCount[c.A] = 0;
-                    ApplyFormationMove(w, c.A, target, new FixVec2(Fix.Ratio(c.E, 100), Fix.Ratio(c.F, 100)));
-                    return;
-                }
-                case CommandType.SetUnitZone:
-                {
-                    // The placement matrix: which zone of this squad's formation the given unit
-                    // type stands in (front/rear/flanks/spread/guard).
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    if (c.B < 0 || c.B >= defs.Units.Length) { Reject(w); return; }
-                    if (c.C < 0 || c.C >= SimConstants.ZoneCount) { Reject(w); return; }
-                    w.ZoneMatrix[c.A * w.UnitDefCount + c.B] = (byte)c.C;
-                    WakeSquad(w, c.A); // re-form NOW, not on the next march (rested members
-                                       // ignore small slot shifts; Spread also reshuffles others)
-                    return;
-                }
-                case CommandType.SetStance:
-                {
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    w.Stance[c.A] = c.B != 0;
-                    WakeSquad(w, c.A); // stance flips reposition the whole squad immediately
-                    return;
-                }
                 case CommandType.SetFacing:
                 {
-                    // Face a direction on demand (Shift+R-drag). Squad members are excluded —
-                    // their body facing is driven by movement and combat.
-                    if (!IsOwnedUnit(w, c.A, c.Player) || w.Leader[c.A] >= 0) { Reject(w); return; }
+                    // Face a direction on demand (Shift+R-drag). Holds while the unit stands
+                    // idle (nothing turns an idle unit); movement and combat retake the facing.
+                    if (!IsOwnedUnit(w, c.A, c.Player)) { Reject(w); return; }
                     var dir = new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100));
                     if (dir.LengthSq.Raw == 0) { Reject(w); return; }
                     Fix dLen = dir.Length;
                     w.Facing[c.A] = new FixVec2(dir.X / dLen, dir.Y / dLen);
-                    if (defs.Units[w.DefIndex[c.A]].IsLeader)
-                    {
-                        w.FacingHeld[c.A] = true; // the ordered front survives future marches
-                        WakeSquad(w, c.A);        // and the squad rotates onto it right now
-                    }
                     return;
                 }
                 case CommandType.SetSupplyPriority:
@@ -415,36 +278,6 @@ namespace Petri.Core
                     w.Dial[c.A] = (byte)c.B;
                     return;
                 }
-                case CommandType.SetSiblingOrdinal:
-                {
-                    // Renumber a battalion or squad: the leader SWAPS positions with the
-                    // sibling currently holding the target ordinal. Swap-only keeps every
-                    // scope's ordinals contiguous (Pass 1d never has holes to repair).
-                    // Roots trade battalion numbers (1..N); limbs trade squad numbers
-                    // (2..N — slot 1 is the prime's own, never reassignable).
-                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
-                    int prime = w.Leader[c.A];
-                    int min = prime < 0 ? 1 : 2;
-                    if (c.B < min || c.B > 255 || c.B == w.SiblingOrdinal[c.A]) { Reject(w); return; }
-                    for (int j = 0; j < w.HighWater; j++)
-                    {
-                        if (j == c.A || w.Kind[j] != EntityKind.Unit || !defs.Units[w.DefIndex[j]].IsLeader) continue;
-                        bool sibling = prime < 0
-                            ? w.Leader[j] < 0 && w.Owner[j] == w.Owner[c.A]
-                            : w.Leader[j] == prime;
-                        if (!sibling || w.SiblingOrdinal[j] != c.B) continue;
-                        w.SiblingOrdinal[j] = w.SiblingOrdinal[c.A];
-                        w.SiblingOrdinal[c.A] = (byte)c.B;
-                        // Wake both squads so the line reshuffles immediately.
-                        w.Settled[c.A] = false;
-                        w.Settled[j] = false;
-                        WakeSquad(w, c.A);
-                        WakeSquad(w, j);
-                        return;
-                    }
-                    Reject(w); // no sibling holds that ordinal
-                    return;
-                }
                 default:
                     Reject(w);
                     return;
@@ -467,10 +300,10 @@ namespace Petri.Core
         }
 
         /// <summary>Pop and start the next queued order. Systems call this when the active
-        /// order completes; a no-op for empty queues and squad-bound units.</summary>
+        /// order completes; a no-op for empty queues.</summary>
         internal static void AdvanceQueue(SimWorld w, DefDatabase defs, int e)
         {
-            if (w.QueueCount[e] == 0 || w.Leader[e] >= 0) return;
+            if (w.QueueCount[e] == 0) return;
             int qb = e * SimConstants.MaxOrderQueue;
             byte kind = w.QueueKind[qb];
             var target = w.QueuePos[qb];
@@ -483,7 +316,6 @@ namespace Petri.Core
             switch (kind)
             {
                 case SimConstants.OrderAttackMove: ApplyAttackMove(w, defs, e, target); break;
-                case SimConstants.OrderFormationMove: ApplyFormationMove(w, e, target, FixVec2.Zero); break;
                 default: ApplyMove(w, e, target); break;
             }
         }
@@ -493,7 +325,6 @@ namespace Petri.Core
             w.MoveTarget[e] = target;
             w.HasMoveOrder[e] = true;
             w.AttackMove[e] = false;
-            w.SeekingSwarm[e] = false; // the player took manual control
             w.WorkNode[e] = -1;   // player order overrides gather assignment
             w.GatherTimer[e] = 0;
             w.BuildTask[e] = -1;  // pulled off the construction crew
@@ -502,27 +333,10 @@ namespace Petri.Core
         private static void ApplyAttackMove(SimWorld w, DefDatabase defs, int e, FixVec2 target)
         {
             w.MoveTarget[e] = target;
-            w.SeekingSwarm[e] = false; // the player took manual control
             w.WorkNode[e] = -1;
             w.GatherTimer[e] = 0;
             w.BuildTask[e] = -1;
-            var amDef = defs.Units[w.DefIndex[e]];
-            if (amDef.IsLeader)
-            {
-                // Leaders march the spine straight to the point (no personal chasing)
-                // while carrying ATTACK POSTURE: their squad — and every linked limb —
-                // releases to fight on contact. Armed or not: the squad does the fighting.
-                w.HasMoveOrder[e] = true;
-                w.AttackMove[e] = true;
-                w.FacingHeld[e] = false;
-                var delta = target - w.Pos[e];
-                if (delta.LengthSq > Fix.Zero)
-                {
-                    Fix len = delta.Length;
-                    w.Facing[e] = new FixVec2(delta.X / len, delta.Y / len);
-                }
-            }
-            else if (amDef.AttackDamage <= 0)
+            if (defs.Units[w.DefIndex[e]].AttackDamage <= 0)
             {
                 // Unarmed (workers): nothing to attack with — just move there.
                 w.HasMoveOrder[e] = true;
@@ -530,29 +344,10 @@ namespace Petri.Core
             }
             else
             {
-                // Armed loose unit: CombatSystem owns the movement (advance, divert to engage).
+                // Armed unit: CombatSystem owns the movement (advance, divert to engage).
                 w.HasMoveOrder[e] = false;
                 w.AttackMove[e] = true;
             }
-        }
-
-        private static void ApplyFormationMove(SimWorld w, int e, FixVec2 target, FixVec2 facing)
-        {
-            // Explicit facing wins — a click-drag line sets a shared front for all
-            // leaders; otherwise face the direction of travel.
-            bool explicitFacing = facing.LengthSq > Fix.Zero;
-            if (!explicitFacing) facing = target - w.Pos[e];
-            if (facing.LengthSq > Fix.Zero)
-            {
-                Fix len = facing.Length;
-                w.Facing[e] = new FixVec2(facing.X / len, facing.Y / len);
-            }
-            w.MoveTarget[e] = target;
-            w.HasMoveOrder[e] = true;
-            w.AttackMove[e] = false;
-            // Explicit facing pins the front for the whole march; otherwise the leader
-            // is free to turn toward its travel direction.
-            w.FacingHeld[e] = explicitFacing;
         }
 
         /// <summary>A building footprint at pos clears every building and resource node by gap.</summary>
@@ -616,15 +411,6 @@ namespace Petri.Core
 
         private static bool IsOwnedBuilding(SimWorld w, int e, byte player) =>
             e >= 0 && e < w.Capacity && w.Kind[e] == EntityKind.Building && w.Owner[e] == player;
-
-        /// <summary>Wake every rested member of a leader's squad so a layout change (zone or
-        /// stance) takes effect on the spot instead of on the next march.</summary>
-        private static void WakeSquad(SimWorld w, int lead)
-        {
-            for (int i = 0; i < w.HighWater; i++)
-                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead)
-                    w.Settled[i] = false;
-        }
 
         private static void Reject(SimWorld w) => w.RejectedCommands++;
     }

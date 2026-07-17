@@ -23,8 +23,8 @@ namespace Petri.Client
         private const int GridRows = 4;
 
         private MatchBootstrap _match;
-        private GUIStyle _label, _small, _header, _button, _circleButton;
-        private Texture2D _white, _discTex;
+        private GUIStyle _label, _small, _header, _button;
+        private Texture2D _white;
         private Rect _panelRect;
         private bool _panelVisible;
 
@@ -134,28 +134,6 @@ namespace Petri.Client
             _white = new Texture2D(1, 1);
             _white.SetPixel(0, 0, Color.white);
             _white.Apply();
-
-            // Circular button background for the swarm-link grid (tinted via backgroundColor).
-            const int ds = 64;
-            _discTex = new Texture2D(ds, ds, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-            float dc = (ds - 1) * 0.5f, dr = ds * 0.5f - 1f;
-            for (int py = 0; py < ds; py++)
-                for (int px = 0; px < ds; px++)
-                {
-                    float dist = Mathf.Sqrt((px - dc) * (px - dc) + (py - dc) * (py - dc));
-                    float a = Mathf.Clamp01(dr - dist); // 1px soft edge
-                    _discTex.SetPixel(px, py, new Color(0.45f, 0.5f, 0.45f, a));
-                }
-            _discTex.Apply();
-            _circleButton = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 11, richText = true, alignment = TextAnchor.MiddleCenter,
-                border = new RectOffset(0, 0, 0, 0), padding = new RectOffset(0, 0, 0, 0),
-            };
-            _circleButton.normal.background = _discTex;
-            _circleButton.hover.background = _discTex;
-            _circleButton.active.background = _discTex;
-            _circleButton.focused.background = _discTex;
             _selCounts = new int[_match.Defs.Units.Length];
             _selBuildingCounts = new int[_match.Defs.Buildings.Length];
         }
@@ -362,8 +340,8 @@ namespace Petri.Client
             if (_match.Input != null)
             {
                 _sb.Length = 0;
-                _sb.Append("Groups <b><color=#ffd94a>1</color></b><color=#999999>=Army</color> ");
-                for (int n = 2; n <= 9; n++)
+                _sb.Append("Groups ");
+                for (int n = 1; n <= 9; n++)
                     _sb.Append(_match.Input.GroupPopulated(n) ? $"<b><color=#ffd94a>{n}</color></b> " : $"<color=#666666>{n}</color> ");
                 GUI.Label(new Rect(12, 8 + 18 * (barLines + 1), 900, 20), _sb.ToString(), _small);
             }
@@ -374,7 +352,7 @@ namespace Petri.Client
             else if (_match.Input != null && _match.Input.AttackArmed)
                 hint = "<color=#ff8a80><b>ATTACK-MOVE</b> — left-click a target point · right-click / Esc to cancel</color>";
             else
-                hint = "L-click select · [1] army, 1,n battalion, 1,n,m squad · Ctrl+[2-9]/[2-9] groups · R-click move/rally · R-drag formation · Shift+R-drag face · [A] attack · [E] encircle · [G] assim · [L]ink [O] pace · [B] build · [S] stop";
+                hint = "L-click select · R-click move / attack · R-drag line move · Shift+R-drag face · [A] attack-move · Ctrl+[1-9]/[1-9] groups · [Space] all military · [B] build · [S] stop";
             GUI.Label(new Rect(12, Screen.height - 24, 1800, 22), hint, _small);
         }
 
@@ -414,13 +392,7 @@ namespace Petri.Client
             }
             else
             {
-                // A linked swarm presents as its hierarchy grid instead of a stat card:
-                // squads plotted by leader position, click to command one individually.
-                if (w.Kind[primary] == EntityKind.Unit && defs.Units[w.DefIndex[primary]].IsLeader
-                    && TryCollectLink(w, defs, primary, out int linkRoot))
-                    DrawSwarmLinkGrid(w, defs, input, linkRoot, cardRect);
-                else
-                    DrawUnitCard(w, defs, primary, cardRect);
+                DrawUnitCard(w, defs, primary, cardRect);
                 DrawSelectionSummary(defs, input.Selected.Count, summaryRect);
                 DrawCommandGrid(w, defs, input, primary);
             }
@@ -455,7 +427,6 @@ namespace Petri.Client
             }
             else _sb.Append("No attack\n");
             _sb.Append($"Speed <b>{def.MoveSpeedCenti / 100f:0.0}</b>   Size <b>{def.CollisionRadiusCenti / 100f:0.00}</b>   Push <b>{def.PushStrength}/{def.PushResistance}</b>\n");
-            _sb.Append($"Roles  T<b>{def.TankScore}</b>  D<b>{def.DamageScore}</b>  S<b>{def.SpeedScore}</b>  R<b>{def.RangeScore}</b>  Su<b>{def.SupportScore}</b>\n");
 
             if (def.IsWorker)
             {
@@ -465,36 +436,16 @@ namespace Petri.Client
                 _sb.Append($"Carrying {amount} / {def.CarryCapacity} {what}\n");
             }
 
+            int auraPct = (w.Rules.LeaderAuraBonusNum * 100 / w.Rules.LeaderAuraBonusDen) - 100;
             if (def.IsLeader)
-            {
-                int squad = 0, limbs = 0;
-                for (int i = 0; i < w.HighWater; i++)
-                {
-                    if (w.Kind[i] != EntityKind.Unit || w.Leader[i] != e) continue;
-                    if (defs.Units[w.DefIndex[i]].IsLeader) limbs++;
-                    else squad++;
-                }
-                _sb.Append($"Squad <b>{squad}</b> / {w.Rules.MaxUnitsPerLeader}{(w.Stance[e] ? "   <color=#ffb3a0><b>ENCIRCLING</b></color>" : "")}\n");
-                if (w.Leader[e] >= 0)
-                    _sb.Append($"<color=#9fd0ff><b>Squad {w.SiblingOrdinal[e]} of Battalion {w.SiblingOrdinal[w.Leader[e]]}</b> — orders flow from its prime ([U] unlink)</color>\n");
-                else if (limbs > 0)
-                    _sb.Append($"<color=#9fd0ff><b>Battalion {w.SiblingOrdinal[e]}</b> — prime of {limbs + 1} squads (select via 1,{w.SiblingOrdinal[e]})</color>\n");
-                else
-                    _sb.Append($"<color=#9fd0ff><b>Battalion {w.SiblingOrdinal[e]}</b> (lone squad — select via 1,{w.SiblingOrdinal[e]})</color>\n");
-            }
-            else if (w.Leaderless[e])
-                _sb.Append("<color=#ff7766><b>LEADERLESS</b>  -25% move & attack, no squad bonus — seeking a leader</color>\n");
-            else if (w.Leader[e] >= 0)
-                _sb.Append($"In squad of <b>{PrettyName(defs.Units[w.DefIndex[w.Leader[e]]].Id)}</b>  <color=#9fe0a0>+{(w.Rules.SquadDamageBonusNum * 100 / w.Rules.SquadDamageBonusDen) - 100}% dmg</color>\n");
-            else if (w.SeekingSwarm[e])
-                _sb.Append("<color=#cfcf88>Seeking a swarm — will join the first leader with room</color>\n");
+                _sb.Append($"<color=#9fd0ff><b>Command aura</b> — friendly units within {w.Rules.LeaderAuraRadiusCenti / 100f:0.0} hit +{auraPct}% harder</color>\n");
+            else if (w.ScratchLeaderAura[e])
+                _sb.Append($"<color=#9fe0a0>In a leader's aura  +{auraPct}% dmg</color>\n");
 
             if (w.SupplyTicks[e] == 0)
                 _sb.Append("<color=#ff7766><b>OUT OF SUPPLY</b> — half damage; return to a supply line</color>\n");
             else if (w.SupplyTicks[e] < w.Rules.SupplyGraceTicks)
                 _sb.Append($"<color=#ffd27f>Supply running out: {w.SupplyTicks[e] / SimConstants.TicksPerSecond}s</color>\n");
-            else if (defs.Units[w.DefIndex[e]].AttackDamage > 0)
-                _sb.Append("<color=#cfcf88>Loose unit — assimilate ([G]) into a swarm for +dmg</color>\n");
 
             GUI.Label(new Rect(r.x, y, r.width, r.height - (y - r.y)), _sb.ToString(), _label);
         }
@@ -510,86 +461,6 @@ namespace Petri.Client
                 if (_selBuildingCounts[d] > 0)
                     _sb.Append($"{_selBuildingCounts[d]} × {PrettyName(defs.Buildings[d].Id)}\n");
             GUI.Label(r, _sb.ToString(), _label);
-        }
-
-        private readonly List<int> _treeLeaders = new List<int>();
-
-        /// <summary>Collect every leader in the link tree containing 'leader'. True only for
-        /// real links (2+ squads) — lone squads keep the normal stat card.</summary>
-        private bool TryCollectLink(SimWorld w, DefDatabase defs, int leader, out int root)
-        {
-            root = leader;
-            int guard = 0;
-            while (w.Leader[root] >= 0 && guard++ < 64) root = w.Leader[root];
-            _treeLeaders.Clear();
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
-                if (!defs.Units[w.DefIndex[i]].IsLeader) continue;
-                int cur = i, g = 0;
-                while (w.Leader[cur] >= 0 && g++ < 64) cur = w.Leader[cur];
-                if (cur == root) _treeLeaders.Add(i);
-            }
-            return _treeLeaders.Count >= 2;
-        }
-
-        /// <summary>
-        /// The swarm-link hierarchy grid: each squad drawn as a button positioned by its
-        /// leader's actual in-game location relative to the rest of the link (world +y = up).
-        /// Click a squad to select and command it individually (right-click then repositions
-        /// its station); [All] reselects the whole swarm.
-        /// </summary>
-        private void DrawSwarmLinkGrid(SimWorld w, DefDatabase defs, InputController input, int root, Rect r)
-        {
-            int totalUnits = 0;
-            float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
-            for (int k = 0; k < _treeLeaders.Count; k++)
-            {
-                int lead = _treeLeaders[k];
-                float x = w.Pos[lead].X.Raw / (float)Fix.OneRaw;
-                float y = w.Pos[lead].Y.Raw / (float)Fix.OneRaw;
-                minX = Mathf.Min(minX, x); maxX = Mathf.Max(maxX, x);
-                minY = Mathf.Min(minY, y); maxY = Mathf.Max(maxY, y);
-                for (int i = 0; i < w.HighWater; i++)
-                    if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !defs.Units[w.DefIndex[i]].IsLeader) totalUnits++;
-            }
-
-            GUI.Label(new Rect(r.x, r.y, r.width - 50, 20), $"<b>Battalion {w.SiblingOrdinal[root]}</b>  {_treeLeaders.Count} squads · {totalUnits + _treeLeaders.Count} units", _label);
-            if (GUI.Button(new Rect(r.x + r.width - 46, r.y, 44, 20), "All", _small)) input.SelectSwarm(root);
-
-            // Map world positions into the plot area; keep a minimum span so tight clusters
-            // still spread readably. World +y is up, GUI +y is down → invert.
-            var plot = new Rect(r.x, r.y + 24, r.width, r.height - 28);
-            const float boxW = 40f, boxH = 40f; // circles: square footprint, two text lines
-            float spanX = Mathf.Max(maxX - minX, 2f), spanY = Mathf.Max(maxY - minY, 2f);
-            float cx0 = (minX + maxX) * 0.5f - spanX * 0.5f, cy0 = (minY + maxY) * 0.5f - spanY * 0.5f;
-
-            var oldBg = GUI.backgroundColor;
-            for (int k = 0; k < _treeLeaders.Count; k++)
-            {
-                int lead = _treeLeaders[k];
-                float x = w.Pos[lead].X.Raw / (float)Fix.OneRaw;
-                float y = w.Pos[lead].Y.Raw / (float)Fix.OneRaw;
-                float nx = (x - cx0) / spanX, ny = (y - cy0) / spanY;
-                float bx = plot.x + nx * (plot.width - boxW);
-                float by = plot.y + (1f - ny) * (plot.height - boxH);
-
-                int members = 0;
-                for (int i = 0; i < w.HighWater; i++)
-                    if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !defs.Units[w.DefIndex[i]].IsLeader) members++;
-
-                bool isSpine = w.Leader[lead] < 0;
-                bool selected = input.Selected.Contains(lead);
-                // Hierarchical address: battalion-squad (the prime is squad 1) — the same
-                // numbers the 1,n,m digit drill selects by.
-                int battalion = w.SiblingOrdinal[root];
-                int squadNo = isSpine ? 1 : w.SiblingOrdinal[lead];
-                string label = $"<b>{battalion}-{squadNo}</b>\n" + (isSpine ? $"★{members}" : members.ToString());
-                GUI.backgroundColor = selected ? Color.white : (isSpine ? new Color(1f, 0.9f, 0.35f) : new Color(1.6f, 1.7f, 1.6f));
-                if (GUI.Button(new Rect(bx, by, boxW, boxH), label, _circleButton))
-                    input.SelectSquadOnly(lead);
-            }
-            GUI.backgroundColor = oldBg;
         }
 
         private void DrawNodeCard(SimWorld w, int e, Rect r)
@@ -685,9 +556,6 @@ namespace Petri.Client
                 _sb.Append(w.ProduceOverride[e] >= 0
                     ? $"Mode: <b>Only {PrettyName(defs.Units[w.ProduceOverride[e]].Id)}</b>\n"
                     : "Mode: <b>Auto</b> (composition weights)\n");
-                _sb.Append(w.AutoAssimilate[e]
-                    ? "New combat units: <b>join nearest swarm</b>\n"
-                    : "New combat units: <b>stay loose</b>\n");
             }
             else _sb.Append("Produces nothing\n");
 
@@ -737,10 +605,6 @@ namespace Petri.Client
                 GUI.backgroundColor = w.ProducePaused[primary] ? hi : oldBg;
                 string pauseLabel = w.ProducePaused[primary] ? "Resume\n<b>[P]</b>" : "Pause\n<b>[P]</b>";
                 if (GUI.Button(Next(), pauseLabel, _button)) input.ToggleProducePaused(primary);
-
-                GUI.backgroundColor = w.AutoAssimilate[primary] ? hi : oldBg;
-                string swarmLabel = w.AutoAssimilate[primary] ? "Swarm On\n<b>[T]</b>" : "Swarm Off\n<b>[T]</b>";
-                if (GUI.Button(Next(), swarmLabel, _button)) input.ToggleAutoAssimilate(primary);
             }
 
             // The headquarters grows tech-path prongs (hub-built buildings), one of each.
@@ -819,59 +683,10 @@ namespace Petri.Client
             float gridW = GridCols * ButtonSize + (GridCols - 1) * ButtonGap;
             float gx = _panelRect.xMax - gridW - 12;
             float gy = _panelRect.y + 6;
-            var oldBg = GUI.backgroundColor;
-            var hi = new Color(1f, 0.9f, 0.35f);
-            bool leaderPrimary = defs.Units[w.DefIndex[primary]].IsLeader;
 
             gy += DrawEntityDial(w, input, primary, gx, gy, gridW);
 
-            // ---- Placement matrix: one row per unit type in the selected squads, one column
-            // per zone. Click a cell to send that type to that part of the formation.
-            GUI.Label(new Rect(gx, gy - 2, gridW, 16), "<b>Front   Rear   Flank   Sprd   Guard</b>", _small);
-            gy += 16;
-
-            int rowsUsed = 0;
-            if (leaderPrimary)
-            {
-                // Unit types present across the selected squads (members of selected leaders).
-                _zoneDefs.Clear();
-                for (int u = 0; u < defs.Units.Length && _zoneDefs.Count < GridRows - 2; u++)
-                {
-                    if (defs.Units[u].IsWorker || defs.Units[u].IsLeader) continue;
-                    for (int i = 0; i < w.HighWater; i++)
-                        if (w.Kind[i] == EntityKind.Unit && w.DefIndex[i] == u && w.Leader[i] >= 0
-                            && input.Selected.Contains(w.Leader[i]))
-                        { _zoneDefs.Add(u); break; }
-                }
-
-                var oldAlign = _small.alignment;
-                foreach (int u in _zoneDefs)
-                {
-                    float rowY = gy + rowsUsed * (ButtonSize + ButtonGap);
-                    _small.alignment = TextAnchor.MiddleRight;
-                    GUI.Label(new Rect(gx - 70, rowY, 66, ButtonSize), ShortName(defs.Units[u].Id), _small);
-                    _small.alignment = oldAlign;
-                    int current = w.ZoneMatrix[primary * w.UnitDefCount + u];
-                    for (int z = 0; z < SimConstants.ZoneCount; z++)
-                    {
-                        var rect = new Rect(gx + z * (ButtonSize + ButtonGap), rowY, ButtonSize, ButtonSize);
-                        GUI.backgroundColor = z == current ? hi : oldBg;
-                        if (GUI.Button(rect, ZoneShort(z), _button)) input.SetUnitZone(u, z);
-                    }
-                    rowsUsed++;
-                }
-                GUI.backgroundColor = oldBg;
-            }
-
-            // ---- Stance + action rows at the bottom of the grid footprint.
-            float ay = gy + (GridRows - 2) * (ButtonSize + ButtonGap);
-            bool encircle = leaderPrimary && w.Stance[primary];
-            GUI.backgroundColor = encircle ? hi : oldBg;
-            if (GUI.Button(new Rect(gx, ay, ButtonSize * 2 + ButtonGap, ButtonSize * 0.7f), encircle ? "Encircling <b>[E]</b>" : "Encircle <b>[E]</b>", _button))
-                input.ToggleEncircle();
-            GUI.backgroundColor = oldBg;
-
-            float actY = ay + ButtonSize * 0.7f + ButtonGap;
+            float actY = gy + 4;
             int slot = 0;
             Rect Act()
             {
@@ -879,15 +694,7 @@ namespace Petri.Client
                 slot++;
                 return r;
             }
-            if (GUI.Button(Act(), "Assim\n<b>[G]</b>", _button)) input.AssimilateSelected();
-            if (GUI.Button(Act(), "Link\n<b>[L]</b>", _button)) input.LinkSelected();
-            if (GUI.Button(Act(), "Unlink\n<b>[U]</b>", _button)) input.UnlinkSelected();
-            bool asOne = leaderPrimary && w.MoveAsOne[primary];
-            GUI.backgroundColor = asOne ? hi : oldBg;
-            if (GUI.Button(Act(), asOne ? "As One\n<b>[O]</b>" : "Own Pace\n<b>[O]</b>", _button)) input.ToggleMoveAsOne();
-            GUI.backgroundColor = oldBg;
             if (GUI.Button(Act(), "Stop\n<b>[S]</b>", _button)) input.StopSelected();
-            GUI.backgroundColor = oldBg;
         }
 
         /// <summary>
@@ -921,20 +728,6 @@ namespace Petri.Client
             }
             return 18f;
         }
-
-        private static string ZoneShort(int zone)
-        {
-            switch (zone)
-            {
-                case SimConstants.ZoneFront: return "Front";
-                case SimConstants.ZoneRear: return "Rear";
-                case SimConstants.ZoneFlanks: return "Flank";
-                case SimConstants.ZoneSpread: return "Sprd";
-                default: return "Guard";
-            }
-        }
-
-        private readonly List<int> _zoneDefs = new List<int>();
 
         private void DrawWorkerGrid(SimWorld w, DefDatabase defs, InputController input, int primary)
         {

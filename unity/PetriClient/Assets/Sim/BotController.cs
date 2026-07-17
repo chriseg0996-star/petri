@@ -9,8 +9,8 @@ namespace Petri.Core
     /// stream), so bot matches replay and hash-verify exactly like human ones.
     ///
     /// The plan is econ + attack waves: tune production toward soldiers, put up military
-    /// buildings as food allows, let auto-assimilation grow squads around produced leaders,
-    /// and fling any full-enough squad (or a leaderless mob) at the enemy headquarters.
+    /// buildings as food allows, and fling the standing army (aura leaders marching along)
+    /// at the enemy headquarters once it's big enough.
     ///
     /// VISION-HONEST: the bot keeps its own exploration memory (1-unit cells, integer math
     /// only — this file lives under the sim's Fix64 rules) stamped from its units' and
@@ -21,8 +21,7 @@ namespace Petri.Core
     public sealed class BotController
     {
         public const int ThinkPeriod = 25;     // decide ~every 1.25s, on the bot's own beat
-        public const int WaveSquadSize = 10;   // squad members before a leader wave launches
-        public const int WaveLooseSize = 10;   // loose fighters before a leaderless mob rushes
+        public const int WaveSize = 10;        // standing fighters before a wave launches
         public const int WavePatienceTicks = 2400; // ~2 min without a wave → attack with whatever
         private const int MinWaveSize = 4;     // even an impatient wave needs a few bodies
         private const int BuildReserve = 60;   // food kept on hand after placing a building
@@ -61,8 +60,8 @@ namespace Petri.Core
 
             // ---- Census. Enemy intel is fog-gated: an enemy HQ counts only once the bot has
             // actually explored its cell (buildings are static, so memory stays valid).
-            int hq = -1, militaryProducers = 0, leaderProducers = 0, freeWorker = -1, looseCombat = 0, leaderCount = 0;
-            int firstScoutable = -1, firstIdleLeader = -1, workerCount = 0;
+            int hq = -1, militaryProducers = 0, freeWorker = -1, standingCombat = 0;
+            int firstScoutable = -1, workerCount = 0;
             long hpSum = 0;
             bool enemyHqFound = false;
             FixVec2 enemyHq = default(FixVec2);
@@ -77,7 +76,6 @@ namespace Petri.Core
                         if (bd.IsHeadquarters && hq < 0) hq = i;
                         // Construction sites count too — don't order a second while one rises.
                         if (ProducesCombat(defs, bd)) militaryProducers++;
-                        if (ProducesLeader(defs, bd)) leaderProducers++;
                     }
                     else if (w.AreEnemies(_player, w.Owner[i]) && bd.IsHeadquarters && !enemyHqFound
                              && ExploredAt(w.Pos[i]))
@@ -96,17 +94,9 @@ namespace Petri.Core
                         workerCount++;
                         if (freeWorker < 0 && w.BuildTask[i] < 0) freeWorker = i;
                     }
-                    else if (ud.IsLeader)
+                    else if (!w.AttackMove[i])
                     {
-                        if (w.Leader[i] < 0)
-                        {
-                            leaderCount++;
-                            if (firstIdleLeader < 0 && !w.AttackMove[i]) firstIdleLeader = i;
-                        }
-                    }
-                    else if (w.Leader[i] < 0 && !w.AttackMove[i])
-                    {
-                        looseCombat++;
+                        standingCombat++;
                         if (firstScoutable < 0) firstScoutable = i;
                     }
                 }
@@ -132,15 +122,14 @@ namespace Petri.Core
             _prevHpSum = hpSum;
             bool underAttack = w.TickCount < _alarmUntil;
 
-            // ---- Expansion. A leader-capable building is the army's spine — put one up
-            // first (falling back to any combat producer); a second combat building when
-            // rich. Production always buys the best AFFORDABLE unit, so a hand-to-mouth
-            // bank never climbs on its own: while short of a building's price, the bot
-            // SAVES by pausing its production tills.
+            // ---- Expansion. Put up a first military building, then a second when rich.
+            // Production always buys the best AFFORDABLE unit, so a hand-to-mouth bank
+            // never climbs on its own: while short of a building's price, the bot SAVES
+            // by pausing its production tills.
             long food = w.Players[_player].Food;
             bool saving = false;
-            int buildPick = leaderProducers == 0 ? PickConstructible(defs, true) : -1;
-            if (buildPick < 0 && food > 1500 && militaryProducers < 2) buildPick = PickConstructible(defs, false);
+            int buildPick = militaryProducers == 0 ? PickConstructible(defs) : -1;
+            if (buildPick < 0 && food > 1500 && militaryProducers < 2) buildPick = PickConstructible(defs);
             if (buildPick >= 0 && freeWorker >= 0 && !underAttack)
             {
                 var bdef = defs.Buildings[buildPick];
@@ -158,75 +147,47 @@ namespace Petri.Core
             }
 
             // ---- Producer management. Under attack everything pins to combat units and
-            // nothing pauses — defense first. In peacetime the first leader gets pinned
-            // (everything else pauses so its price can bank), and with the worker pool
-            // full, producers pin to combat so the till stops buying cheap workers.
-            bool needLeader = !underAttack && leaderCount == 0 && workerCount >= 4 && leaderProducers > 0;
+            // nothing pauses — defense first. With the worker pool full, producers pin to
+            // combat so the till stops buying cheap workers.
             for (int b = 0; b < w.HighWater; b++)
             {
                 if (w.Kind[b] != EntityKind.Building || w.Owner[b] != _player || w.ConstructionRemaining[b] > 0) continue;
                 var bd = defs.Buildings[w.DefIndex[b]];
                 if (bd.ProducesDense.Length == 0) continue;
-                int leaderCand = -1, combatCand = -1;
+                int combatCand = -1;
                 for (int k = 0; k < bd.ProducesDense.Length; k++)
                 {
                     var ud = defs.Units[bd.ProducesDense[k]];
-                    if (ud.IsLeader) { if (leaderCand < 0) leaderCand = bd.ProducesDense[k]; }
-                    else if (!ud.IsWorker && combatCand < 0) combatCand = bd.ProducesDense[k];
+                    if (!ud.IsWorker && combatCand < 0) combatCand = bd.ProducesDense[k];
                 }
-                int desired = underAttack && combatCand >= 0 ? combatCand
-                    : needLeader && leaderCand >= 0 ? leaderCand
-                    : workerCount >= WorkerCap && combatCand >= 0 ? combatCand : -1;
+                int desired = (underAttack || workerCount >= WorkerCap) && combatCand >= 0 ? combatCand : -1;
                 if (w.ProduceOverride[b] != desired)
                     outCommands.Add(new Command { Player = _player, Type = CommandType.SetProduceOverride, A = b, B = desired });
-                bool pause = !underAttack && (saving || (needLeader && leaderCand < 0));
+                bool pause = !underAttack && saving;
                 if (w.ProducePaused[b] != pause)
                     outCommands.Add(new Command { Player = _player, Type = CommandType.SetProducePaused, A = b, B = pause ? 1 : 0 });
             }
 
-            // ---- No known enemy HQ yet: send a scout through the map's far reaches — a
-            // loose fighter if one exists, else an idle squad (a leader scout takes its
-            // whole formation along, which doubles as the first push).
+            // ---- No known enemy HQ yet: send a scout through the map's far reaches.
             if (!enemyHqFound)
             {
-                Scout(w, firstScoutable >= 0 ? firstScoutable : firstIdleLeader, outCommands);
+                Scout(w, firstScoutable, outCommands);
                 return;
             }
 
-            // ---- Attack waves at the enemy headquarters. Full squads launch on their own;
-            // after WavePatienceTicks without any wave the bot loses patience and throws
-            // whatever it has (keeps small economies aggressive instead of turtling forever).
+            // ---- Attack waves at the enemy headquarters: once the standing army is big
+            // enough, attack-move everyone (aura leaders march with the wave). After
+            // WavePatienceTicks without a wave the bot loses patience and throws whatever
+            // it has (keeps small economies aggressive instead of turtling forever).
             int tx = CentiOf(enemyHq.X), ty = CentiOf(enemyHq.Y);
             bool impatient = w.TickCount - _lastWaveTick >= WavePatienceTicks;
-            int needSquad = impatient ? MinWaveSize : WaveSquadSize;
-            bool launched = false;
-
-            for (int lead = 0; lead < w.HighWater; lead++)
+            if (standingCombat >= (impatient ? MinWaveSize : WaveSize))
             {
-                if (w.Kind[lead] != EntityKind.Unit || w.Owner[lead] != _player) continue;
-                if (!defs.Units[w.DefIndex[lead]].IsLeader || w.Leader[lead] >= 0) continue;
-                if (w.AttackMove[lead]) continue; // already committed to a wave
-                int squad = 0;
-                for (int m = 0; m < w.HighWater; m++)
-                    if (w.Kind[m] == EntityKind.Unit && w.Leader[m] == lead && !defs.Units[w.DefIndex[m]].IsLeader) squad++;
-                if (squad < needSquad) continue;
-                outCommands.Add(new Command
-                {
-                    Player = _player, Type = CommandType.AttackMove, A = lead,
-                    B = tx + _rng.NextInt(401) - 200, C = ty + _rng.NextInt(401) - 200,
-                });
-                launched = true;
-            }
-
-            // No leaders on the field: once a pile of loose fighters accumulates, mob rush.
-            int needLoose = impatient ? MinWaveSize : WaveLooseSize;
-            if (leaderCount == 0 && looseCombat >= needLoose)
-            {
+                bool launched = false;
                 for (int u = 0; u < w.HighWater; u++)
                 {
                     if (w.Kind[u] != EntityKind.Unit || w.Owner[u] != _player) continue;
-                    var ud = defs.Units[w.DefIndex[u]];
-                    if (ud.IsWorker || ud.IsLeader || w.Leader[u] >= 0 || w.AttackMove[u]) continue;
+                    if (defs.Units[w.DefIndex[u]].IsWorker || w.AttackMove[u]) continue;
                     outCommands.Add(new Command
                     {
                         Player = _player, Type = CommandType.AttackMove, A = u,
@@ -234,8 +195,8 @@ namespace Petri.Core
                     });
                     launched = true;
                 }
+                if (launched) _lastWaveTick = w.TickCount;
             }
-            if (launched) _lastWaveTick = w.TickCount;
         }
 
         /// <summary>Stamp exploration memory from every own unit's/building's vision circle.
@@ -304,15 +265,14 @@ namespace Petri.Core
             }
         }
 
-        /// <summary>First constructible building that can produce a leader (leaderCapable)
-        /// or any combat unit — the bot's expansion shopping list.</summary>
-        private static int PickConstructible(DefDatabase defs, bool leaderCapable)
+        /// <summary>First constructible building that can produce a combat unit — the bot's
+        /// expansion shopping list.</summary>
+        private static int PickConstructible(DefDatabase defs)
         {
             for (int b = 0; b < defs.Buildings.Length; b++)
             {
                 var bd = defs.Buildings[b];
-                if (!bd.Constructible) continue;
-                if (leaderCapable ? ProducesLeader(defs, bd) : ProducesCombat(defs, bd)) return b;
+                if (bd.Constructible && ProducesCombat(defs, bd)) return b;
             }
             return -1;
         }
@@ -354,13 +314,6 @@ namespace Petri.Core
         {
             for (int k = 0; k < bd.ProducesDense.Length; k++)
                 if (!defs.Units[bd.ProducesDense[k]].IsWorker) return true;
-            return false;
-        }
-
-        private static bool ProducesLeader(DefDatabase defs, BuildingDef bd)
-        {
-            for (int k = 0; k < bd.ProducesDense.Length; k++)
-                if (defs.Units[bd.ProducesDense[k]].IsLeader) return true;
             return false;
         }
 

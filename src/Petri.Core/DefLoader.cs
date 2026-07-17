@@ -93,16 +93,9 @@ namespace Petri.Core
                 StartingFood = GetInt(r, "startingFood", 200),
                 StartingWorkers = GetInt(r, "startingWorkers", 6),
                 NodeRadiusCenti = GetInt(r, "nodeRadiusCenti", 60),
-                MaxUnitsPerLeader = GetInt(r, "maxUnitsPerLeader", 15),
-                MaxLeadersPerPlayer = GetInt(r, "maxLeadersPerPlayer", 9),
-                MaxSquadsPerBattalion = GetInt(r, "maxSquadsPerBattalion", 9),
-                SwarmJoinRadiusCenti = GetInt(r, "swarmJoinRadiusCenti", 400),
-                RegroupRadiusCenti = GetInt(r, "regroupRadiusCenti", 400),
-                LeaderlessPenaltyNum = GetInt(r, "leaderlessPenaltyNum", 3),
-                LeaderlessPenaltyDen = GetInt(r, "leaderlessPenaltyDen", 4),
-                SquadDamageBonusNum = GetInt(r, "squadDamageBonusNum", 5),
-                SquadDamageBonusDen = GetInt(r, "squadDamageBonusDen", 4),
-                SquadCohesionRadiusCenti = GetInt(r, "squadCohesionRadiusCenti", 600),
+                LeaderAuraBonusNum = GetInt(r, "leaderAuraBonusNum", 5),
+                LeaderAuraBonusDen = GetInt(r, "leaderAuraBonusDen", 4),
+                LeaderAuraRadiusCenti = GetInt(r, "leaderAuraRadiusCenti", 600),
                 FrontArcCosNum = GetInt(r, "frontArcCosNum", 1),
                 FrontArcCosDen = GetInt(r, "frontArcCosDen", 2),
                 RearArcCosNum = GetInt(r, "rearArcCosNum", 1),
@@ -111,16 +104,6 @@ namespace Petri.Core
                 SideDamageDen = GetInt(r, "sideDamageDen", 4),
                 RearDamageNum = GetInt(r, "rearDamageNum", 3),
                 RearDamageDen = GetInt(r, "rearDamageDen", 2),
-                LinkSpacingCenti = GetInt(r, "linkSpacingCenti", 500),
-                EnemyAnchorRangeCenti = GetInt(r, "enemyAnchorRangeCenti", 1500),
-                ZoneFrontForwardCenti = GetInt(r, "zoneFrontForwardCenti", 160),
-                ZoneRearForwardCenti = GetInt(r, "zoneRearForwardCenti", -110),
-                ZoneRowWidth = GetInt(r, "zoneRowWidth", 6),
-                ZoneSpacingCenti = GetInt(r, "zoneSpacingCenti", 85),
-                ZoneRankSpacingCenti = GetInt(r, "zoneRankSpacingCenti", 75),
-                ZoneFlankSideCenti = GetInt(r, "zoneFlankSideCenti", 300),
-                ZoneGuardRadiusCenti = GetInt(r, "zoneGuardRadiusCenti", 130),
-                ZoneGuardGapCenti = GetInt(r, "zoneGuardGapCenti", 85),
                 SupplyRadiusCenti = GetInt(r, "supplyRadiusCenti", 1800),
                 SupplyLinkRangeCenti = GetInt(r, "supplyLinkRangeCenti", 3000),
                 SupplyGraceTicks = GetInt(r, "supplyGraceTicks", 600),
@@ -168,14 +151,8 @@ namespace Petri.Core
                 BuildTimeTicks = GetInt(r, "buildTimeTicks"),
                 IsWorker = GetBool(r, "isWorker"),
                 IsLeader = GetBool(r, "isLeader"),
-                DefaultZone = ParseZone(GetString(r, "zone", "front")),
                 CarryCapacity = GetInt(r, "carryCapacity"),
                 GatherTicks = GetInt(r, "gatherTicks"),
-                TankScore = GetInt(r, "tankScore"),
-                DamageScore = GetInt(r, "damageScore"),
-                SpeedScore = GetInt(r, "speedScore"),
-                RangeScore = GetInt(r, "rangeScore"),
-                SupportScore = GetInt(r, "supportScore"),
             };
         }
 
@@ -237,19 +214,6 @@ namespace Petri.Core
                 case "acquireRange": return UpgradeStat.AcquireRange;
                 case "armor": return UpgradeStat.Armor;
                 default: return UpgradeStat.Damage;
-            }
-        }
-
-        /// <summary>"front" | "rear" | "flanks" | "spread" | "guard" → zone constant.</summary>
-        private static byte ParseZone(string zone)
-        {
-            switch (zone)
-            {
-                case "rear": return SimConstants.ZoneRear;
-                case "flanks": return SimConstants.ZoneFlanks;
-                case "spread": return SimConstants.ZoneSpread;
-                case "guard": return SimConstants.ZoneGuard;
-                default: return SimConstants.ZoneFront;
             }
         }
 
