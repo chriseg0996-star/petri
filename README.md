@@ -27,13 +27,12 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
 2. Press **Play**. The main menu builds itself from code (`MainMenu` via
    `RuntimeInitializeOnLoadMethod`) — no scene wiring. **Skirmish** (map + seed) starts a match;
    matches end with a victory banner back to the menu.
-3. Controls: **L-click/drag** select (dbl-click = all of type, **Space** = all military) ·
-   **R-click** move/rally · **R-drag** formation curve · **Shift+R-drag** set facing ·
-   **[A]** attack-move · **[E]** encircle · **[G]** assimilate · **[L]/[U]** link/unlink ·
-   **[O]** pace · **[1]** army drill (1 = all military, 1,n = nth battalion left-to-right,
-   1,n,m = mth squad) · **Ctrl+[2-9]/[2-9]** control groups · **[B]** build · **[S]** stop ·
-   **arrows** or **middle-drag** pan · **scroll** zoom. The placement matrix (grid) reassigns unit types between
-   formation zones per squad.
+3. Controls (classic RTS — every unit obeys direct orders): **L-click/drag** select
+   (dbl-click = all of type, **Space** = all military) · **R-click** move/rally/attack
+   (multi-unit moves land in a spread grid centered on the click) · **R-drag** line move
+   (units spread along the drawn curve) · **Shift+R-drag** set facing · **[A]** attack-move ·
+   **Ctrl+[1-9]/[1-9]** control groups · **[B]** build · **[S]** stop ·
+   **arrows** or **middle-drag** pan · **scroll** zoom.
 
 If mouse/keyboard do nothing, set **Edit ▸ Project Settings ▸ Player ▸ Active Input Handling**
 to *Input Manager (Old)* or *Both* — the client uses the legacy `UnityEngine.Input` API.
@@ -52,34 +51,25 @@ runtime, so authored C&C-style art drops in later by swapping them per def id.
 ## Implemented so far
 
 - Deterministic tick loop with FNV-1a world fingerprint; replay = re-fed command log.
-- Data-driven unit/building defs with tank/damage/speed/range/support role scores.
+- Data-driven unit/building defs (pure-integer JSON).
 - Automated weighted production (players set composition, buildings build on their own);
-  fresh combat units auto-reinforce the nearest swarm leader with capacity.
+  fresh units walk to the rally point and await orders.
 - Worker economy: gather from nodes, haul to headquarters.
 - Movement, hard-body collision with push-resistance-weighted separation, auto-engage combat,
   HQ-death elimination.
-- **Swarm system**: leaders command up to `maxUnitsPerLeader` (30) units, capped at
-  `maxLeadersPerPlayer` (27) per player. Squads are atomic (select any member = the squad;
-  orders flow through the leader; the sim rejects member micro). Leader death → Leaderless
-  (-25% move/attack) → retreat & auto-rejoin. Super-swarm LINKS: leader→leader trees with
-  limb stations (freeform-drawn or ordinal defaults), auto member rebalancing across the
-  link, arrive-as-one pacing, and a spatial hierarchy grid addressed by battalion-squad.
-- **Army hierarchy**: every leader holds a hashed `SiblingOrdinal` — its left-to-right
-  position among siblings (root leaders = battalion numbers 1..N per player; limbs = squad
-  numbers 2..N, the prime is squad 1). Ordinals auto-assign/compact deterministically
-  (SwarmSystem Pass 1d), drive default limb stations (squad N stands N-1 spacings right of
-  the prime), and are renumberable via `SetSiblingOrdinal` (swap semantics). Links are
-  capped at two levels and `maxSquadsPerBattalion` (9) squads. Client: key **1** drills the
-  hierarchy (army → battalion → squad, 0.4 s chord); ordering 2+ battalions spreads them
-  into one echeloned front line, left-to-right by number.
-- **Dynamic formations**: per-squad placement matrix (hashed def→zone assignments; Front /
-  Rear / Flanks / Spread / Guard, code-built layouts, spine-centered) set from the command
-  grid with live re-forming; Encircle stance wraps the nearest enemy. Freeform drag curves
-  position multiple leaders along a drawn front; Shift+R-drag orders facing.
-- **Combat**: attack-move posture (releases squads to fight on contact; plain moves never
-  chase), squad cohesion damage bonus, DIRECTIONAL damage (front ×1 / side ×1.25 / rear
-  ×1.5 vs the victim's simulated facing — units turn at data-driven turn speeds), visual
-  projectiles for ranged units, death pops, health bars.
+- **Classic per-unit control**: every unit obeys direct Move / AttackMove / Stop /
+  SetFacing — no control layer between the player and their units. Multi-unit right-clicks
+  spread into a compact grid centered on the click; right-drag lays the selection along a
+  drawn line. The swarm-era command ids (4, 5, 11-15, 23) are retired and reserved (they
+  Reject), never to be reused.
+- **Leader aura**: the swarm-leader unit survives as a force multiplier, not a control
+  handle — friendly units within `leaderAuraRadiusCenti` (6u) of a live same-owner leader
+  deal `leaderAuraBonus` (+25%) damage. Derived per-tick scratch (LeaderAuraSystem), never
+  hashed; selected leaders draw their aura ring.
+- **Combat**: attack-move (advance, divert to engage; plain moves never chase),
+  DIRECTIONAL damage (front ×1 / side ×1.25 / rear ×1.5 vs the victim's simulated facing —
+  units turn at data-driven turn speeds), visual projectiles for ranged units, death pops,
+  health bars.
 - **Tech paths**: 4 constructible hub add-ons (Lysis / Flagella / Toxin / Capsule), each
   producing a strong+cheap specialist unit and gating 2 purchasable upgrades. Upgrades are
   per-player hashed state (`PlayerState.UpgradeLevels`) that fold a Num/Den into one integer

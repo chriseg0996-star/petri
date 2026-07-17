@@ -391,6 +391,20 @@ namespace Petri.Client
                         sr.color = c;
                         sr.sortingOrder = ud.IsLeader ? 4 : 3;
 
+                        // A selected own leader shows its command-aura reach — units inside
+                        // the ring fight harder, so the player can shape the line around it.
+                        if (ud.IsLeader && w.Owner[i] == MatchBootstrap.HumanPlayer
+                            && selected != null && selected.Contains(i))
+                        {
+                            float ad = w.Rules.LeaderAuraRadiusCenti / 100f * 2f;
+                            var aura = Rent(_overlays, ref overlay);
+                            aura.sprite = _thinRing;
+                            aura.transform.position = new Vector3(x, y, 0f);
+                            aura.transform.localScale = new Vector3(ad, ad, 1f);
+                            aura.color = new Color(0.65f, 0.85f, 1f, 0.35f);
+                            aura.sortingOrder = 2;
+                        }
+
                         if (!detail) break; // zoomed out: the arrow would be sub-pixel noise
                         // Facing arrow: a small dark wedge riding the front edge of the body,
                         // oriented along the unit's simulated facing (interpolated for smoothness).
