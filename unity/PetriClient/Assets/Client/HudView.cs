@@ -52,12 +52,35 @@ namespace Petri.Client
         public void Bind(MatchBootstrap match) => _match = match;
 
         /// <summary>True when the given mouse position (bottom-up screen coords) is over the
-        /// command panel or the minimap — InputController uses this so HUD clicks never
-        /// select or order units in the world underneath.</summary>
+        /// command panel or the minimap — InputController uses this so LEFT clicks over the
+        /// HUD never select units in the world underneath.</summary>
         public bool IsPointerOver(Vector2 mouseBottomUp)
         {
             var p = new Vector2(mouseBottomUp.x, Screen.height - mouseBottomUp.y);
             if (_panelVisible && _panelRect.Contains(p)) return true;
+            return _match != null && _match.Map != null && MinimapRect.Contains(p);
+        }
+
+        // Every interactive control registers its rect here each OnGUI pass, so right-clicks
+        // can tell REAL widgets from the panel's dead background. IMGUI runs several passes
+        // per frame; the list rebuilds identically each pass, so reads from Update are stable.
+        private readonly List<Rect> _hotRects = new List<Rect>(32);
+
+        private Rect Hot(Rect r)
+        {
+            _hotRects.Add(r);
+            return r;
+        }
+
+        /// <summary>True when a RIGHT click at the given mouse position (bottom-up screen
+        /// coords) must be swallowed: it's on an actual widget (button/slider) or the minimap
+        /// (which has its own right-click order path). The panel's dead background lets
+        /// right-clicks through to the battlefield.</summary>
+        public bool BlocksRightClick(Vector2 mouseBottomUp)
+        {
+            var p = new Vector2(mouseBottomUp.x, Screen.height - mouseBottomUp.y);
+            for (int i = 0; i < _hotRects.Count; i++)
+                if (_hotRects[i].Contains(p)) return true;
             return _match != null && _match.Map != null && MinimapRect.Contains(p);
         }
 
@@ -93,13 +116,14 @@ namespace Petri.Client
         {
             if (_match == null || _match.Sim == null) return;
             EnsureStyles();
+            _hotRects.Clear();
             DrawDragBox();
             DrawTopBar();
             DrawCommandPanel();
             DrawMinimap();
 
             // Quit-to-menu, always available top-right.
-            if (GUI.Button(new Rect(Screen.width * 0.5f - 32, 8, 64, 24), "Menu", _small))
+            if (GUI.Button(Hot(new Rect(Screen.width * 0.5f - 32, 8, 64, 24)), "Menu", _small))
                 _match.QuitToMenu();
 
             // Victory / defeat banner once the match is decided.
@@ -115,7 +139,7 @@ namespace Petri.Client
                 big.alignment = TextAnchor.MiddleCenter;
                 GUI.Label(new Rect(r.x, r.y + 14, r.width, 46), text, big);
                 big.alignment = align;
-                if (GUI.Button(new Rect(r.x + r.width * 0.5f - 90, r.y + 74, 180, 36), "Return to Menu", _button))
+                if (GUI.Button(Hot(new Rect(r.x + r.width * 0.5f - 90, r.y + 74, 180, 36)), "Return to Menu", _button))
                     _match.QuitToMenu();
             }
         }
@@ -591,20 +615,20 @@ namespace Petri.Client
             if (produces)
             {
                 GUI.backgroundColor = over < 0 ? hi : oldBg;
-                if (GUI.Button(Next(), "Auto\n<b>[1]</b>", _button)) input.ApplyProduceOverride(-1);
+                if (GUI.Button(Hot(Next()),"Auto\n<b>[1]</b>", _button)) input.ApplyProduceOverride(-1);
 
                 for (int k = 0; k < bdef.ProducesDense.Length; k++)
                 {
                     int unitIx = bdef.ProducesDense[k];
                     var udef = defs.Units[unitIx];
                     GUI.backgroundColor = over == unitIx ? hi : oldBg;
-                    if (GUI.Button(Next(), $"{ShortName(udef.Id)}\n{Nut(udef.FoodCost + "n")} <b>[{k + 2}]</b>", _button))
+                    if (GUI.Button(Hot(Next()),$"{ShortName(udef.Id)}\n{Nut(udef.FoodCost + "n")} <b>[{k + 2}]</b>", _button))
                         input.ApplyProduceOverride(unitIx);
                 }
 
                 GUI.backgroundColor = w.ProducePaused[primary] ? hi : oldBg;
                 string pauseLabel = w.ProducePaused[primary] ? "Resume\n<b>[P]</b>" : "Pause\n<b>[P]</b>";
-                if (GUI.Button(Next(), pauseLabel, _button)) input.ToggleProducePaused(primary);
+                if (GUI.Button(Hot(Next()),pauseLabel, _button)) input.ToggleProducePaused(primary);
             }
 
             // The headquarters grows tech-path prongs (hub-built buildings), one of each.
@@ -617,7 +641,7 @@ namespace Petri.Client
                     bool have = PlayerHasBuilding(w, b);
                     string name = PrettyName(pd.Id).Split(' ')[0]; // "Lysis Chamber" → "Lysis"
                     GUI.backgroundColor = have ? hi : oldBg;
-                    if (GUI.Button(Next(), have ? $"{name}\n<b>✓</b>" : $"{name}\n{Min(pd.MineralCost + "m")}", _button) && !have)
+                    if (GUI.Button(Hot(Next()),have ? $"{name}\n<b>✓</b>" : $"{name}\n{Min(pd.MineralCost + "m")}", _button) && !have)
                         input.BuildProng(primary, b);
                 }
             }
@@ -630,7 +654,7 @@ namespace Petri.Client
                 if (up.RequiresBuildingDense != w.DefIndex[primary]) continue;
                 bool owned = u < upLevels.Length && upLevels[u] != 0;
                 GUI.backgroundColor = owned ? hi : oldBg;
-                if (GUI.Button(Next(), owned ? $"{ShortName(up.Id)}\n<b>✓</b>" : $"{ShortName(up.Id)}\n{Nut(up.FoodCost + "n")}", _button) && !owned)
+                if (GUI.Button(Hot(Next()),owned ? $"{ShortName(up.Id)}\n<b>✓</b>" : $"{ShortName(up.Id)}\n{Nut(up.FoodCost + "n")}", _button) && !owned)
                     input.BuyUpgrade(u);
             }
             GUI.backgroundColor = oldBg;
@@ -639,13 +663,13 @@ namespace Petri.Client
             {
                 GUI.backgroundColor = oldBg;
                 int cost = w.Rules.CacheUpgradeFoodCost << w.Tier[primary];
-                if (GUI.Button(Next(), $"Upgrade\n{Nut(cost + "n")} <b>[U]</b>", _button)) input.UpgradeCache(primary);
+                if (GUI.Button(Hot(Next()),$"Upgrade\n{Nut(cost + "n")} <b>[U]</b>", _button)) input.UpgradeCache(primary);
             }
 
             if (w.HasRally[primary])
             {
                 GUI.backgroundColor = oldBg;
-                if (GUI.Button(Next(), "No Rally\n<b>[R]</b>", _button)) input.ClearRally();
+                if (GUI.Button(Hot(Next()),"No Rally\n<b>[R]</b>", _button)) input.ClearRally();
             }
             GUI.backgroundColor = oldBg;
         }
@@ -694,7 +718,7 @@ namespace Petri.Client
                 slot++;
                 return r;
             }
-            if (GUI.Button(Act(), "Stop\n<b>[S]</b>", _button)) input.StopSelected();
+            if (GUI.Button(Hot(Act()), "Stop\n<b>[S]</b>", _button)) input.StopSelected();
         }
 
         /// <summary>
@@ -711,7 +735,7 @@ namespace Petri.Client
             {
                 var me = w.Players[MatchBootstrap.HumanPlayer];
                 GUI.Label(new Rect(gx, gy, 34, 16), "Core", _small);
-                float v = GUI.HorizontalSlider(new Rect(gx + 36, gy + 4, width - 128, 12), me.SupplyPriority, 0f, 100f);
+                float v = GUI.HorizontalSlider(Hot(new Rect(gx + 36, gy + 4, width - 128, 12)), me.SupplyPriority, 0f, 100f);
                 GUI.Label(new Rect(gx + width - 88, gy, 88, 16), $"Front <b>{me.SupplyPriority}%</b>", _small);
                 int snap = Mathf.RoundToInt(v / 5f) * 5;
                 if (snap != me.SupplyPriority)
@@ -721,7 +745,7 @@ namespace Petri.Client
             {
                 int cur = w.Dial[primary];
                 GUI.Label(new Rect(gx, gy, 34, 16), "Mod", _small);
-                float v = GUI.HorizontalSlider(new Rect(gx + 36, gy + 4, width - 128, 12), cur, 0f, 100f);
+                float v = GUI.HorizontalSlider(Hot(new Rect(gx + 36, gy + 4, width - 128, 12)), cur, 0f, 100f);
                 GUI.Label(new Rect(gx + width - 88, gy, 88, 16), $"<b>{cur}%</b> <i>rsvd</i>", _small);
                 int snap = Mathf.RoundToInt(v / 5f) * 5;
                 if (snap != cur) input.ApplyDial(snap);
@@ -748,7 +772,7 @@ namespace Petri.Client
                 var rect = new Rect(gx + col * (ButtonSize + ButtonGap), gy + row * (ButtonSize + ButtonGap), ButtonSize, ButtonSize);
                 GUI.backgroundColor = input.PlacingBuilding == b ? new Color(1f, 0.9f, 0.35f) : oldBg;
                 string key = slot == 0 ? " <b>[B]</b>" : "";
-                if (GUI.Button(rect, $"{ShortName(defs.Buildings[b].Id)}\n{CostLabel(defs.Buildings[b])}{key}", _button))
+                if (GUI.Button(Hot(rect), $"{ShortName(defs.Buildings[b].Id)}\n{CostLabel(defs.Buildings[b])}{key}", _button))
                     input.BeginPlacement(b);
                 slot++;
             }
@@ -757,7 +781,7 @@ namespace Petri.Client
             var stopRect = new Rect(gx + slot % GridCols * (ButtonSize + ButtonGap),
                 gy + slot / GridCols * (ButtonSize + ButtonGap), ButtonSize, ButtonSize);
             GUI.backgroundColor = oldBg;
-            if (GUI.Button(stopRect, "Stop\n<b>[S]</b>", _button))
+            if (GUI.Button(Hot(stopRect), "Stop\n<b>[S]</b>", _button))
                 input.StopSelected();
         }
 

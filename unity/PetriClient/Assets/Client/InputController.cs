@@ -98,7 +98,11 @@ namespace Petri.Client
             PruneDead(w);
             HandleHotkeys();
 
+            // Left clicks respect the whole panel (selection safety); right clicks pass
+            // through the panel's dead background and are only swallowed by real widgets
+            // and the minimap — so the bottom strip of the battlefield stays orderable.
             bool overHud = _match.Hud != null && _match.Hud.IsPointerOver(Input.mousePosition);
+            bool blocksRight = _match.Hud != null && _match.Hud.BlocksRightClick(Input.mousePosition);
 
             // Build-placement mode swallows the mouse: left places, right/Esc cancels.
             if (PlacingBuilding >= 0)
@@ -166,7 +170,7 @@ namespace Petri.Client
             }
 
             // ---- Shift+Right drag: aim a facing — on release everything selected turns to it.
-            if (Input.GetMouseButtonDown(1) && Selected.Count > 0 && !overHud
+            if (Input.GetMouseButtonDown(1) && Selected.Count > 0 && !blocksRight
                 && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))
             {
                 FacingDragging = true;
@@ -189,7 +193,7 @@ namespace Petri.Client
                 }
             }
             // ---- Right mouse: click = move/rally/attack; drag = BAR-style formation curve.
-            else if (Input.GetMouseButtonDown(1) && Selected.Count > 0 && !overHud)
+            else if (Input.GetMouseButtonDown(1) && Selected.Count > 0 && !blocksRight)
             {
                 RightDragging = true;
                 RightDragStartScreen = RightDragNowScreen = Input.mousePosition;
