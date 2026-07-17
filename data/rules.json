@@ -1,6 +1,6 @@
 {
   "maxEntities": 16384, "startingFood": 5200, "startingWorkers": 6, "nodeRadiusCenti": 60,
-  "maxUnitsPerLeader": 30, "maxLeadersPerPlayer": 9, "swarmJoinRadiusCenti": 20000, "regroupRadiusCenti": 400,
+  "maxUnitsPerLeader": 30, "maxLeadersPerPlayer": 27, "maxSquadsPerBattalion": 9, "swarmJoinRadiusCenti": 20000, "regroupRadiusCenti": 400,
   "leaderlessPenaltyNum": 3, "leaderlessPenaltyDen": 4,
   "squadDamageBonusNum": 5, "squadDamageBonusDen": 4,
   "squadCohesionRadiusCenti": 600, "linkSpacingCenti": 500, "enemyAnchorRangeCenti": 1500,

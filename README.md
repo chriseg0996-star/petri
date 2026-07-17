@@ -30,7 +30,8 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
 3. Controls: **L-click/drag** select (dbl-click = all of type, **Space** = all military) ·
    **R-click** move/rally · **R-drag** formation curve · **Shift+R-drag** set facing ·
    **[A]** attack-move · **[E]** encircle · **[G]** assimilate · **[L]/[U]** link/unlink ·
-   **[O]** pace · **Ctrl+[1-9]/[1-9]** control groups · **[B]** build · **[S]** stop ·
+   **[O]** pace · **[1]** army drill (1 = all military, 1,n = nth battalion left-to-right,
+   1,n,m = mth squad) · **Ctrl+[2-9]/[2-9]** control groups · **[B]** build · **[S]** stop ·
    **arrows** or **middle-drag** pan · **scroll** zoom. The placement matrix (grid) reassigns unit types between
    formation zones per squad.
 
@@ -57,12 +58,20 @@ runtime, so authored C&C-style art drops in later by swapping them per def id.
 - Worker economy: gather from nodes, haul to headquarters.
 - Movement, hard-body collision with push-resistance-weighted separation, auto-engage combat,
   HQ-death elimination.
-- **Swarm system**: leaders command up to `maxUnitsPerLeader` (30) units, capped at 9 leaders
-  per player (matching control groups). Squads are atomic (select any member = the squad;
+- **Swarm system**: leaders command up to `maxUnitsPerLeader` (30) units, capped at
+  `maxLeadersPerPlayer` (27) per player. Squads are atomic (select any member = the squad;
   orders flow through the leader; the sim rejects member micro). Leader death → Leaderless
   (-25% move/attack) → retreat & auto-rejoin. Super-swarm LINKS: leader→leader trees with
-  limb stations (default abreast or freeform-drawn), auto member rebalancing across the
-  link, arrive-as-one pacing, and a spatial hierarchy grid with auto control groups.
+  limb stations (freeform-drawn or ordinal defaults), auto member rebalancing across the
+  link, arrive-as-one pacing, and a spatial hierarchy grid addressed by battalion-squad.
+- **Army hierarchy**: every leader holds a hashed `SiblingOrdinal` — its left-to-right
+  position among siblings (root leaders = battalion numbers 1..N per player; limbs = squad
+  numbers 2..N, the prime is squad 1). Ordinals auto-assign/compact deterministically
+  (SwarmSystem Pass 1d), drive default limb stations (squad N stands N-1 spacings right of
+  the prime), and are renumberable via `SetSiblingOrdinal` (swap semantics). Links are
+  capped at two levels and `maxSquadsPerBattalion` (9) squads. Client: key **1** drills the
+  hierarchy (army → battalion → squad, 0.4 s chord); ordering 2+ battalions spreads them
+  into one echeloned front line, left-to-right by number.
 - **Dynamic formations**: per-squad placement matrix (hashed def→zone assignments; Front /
   Rear / Flanks / Spread / Guard, code-built layouts, spine-centered) set from the command
   grid with live re-forming; Encircle stance wraps the nearest enemy. Freeform drag curves
