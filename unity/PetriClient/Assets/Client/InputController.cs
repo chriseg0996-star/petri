@@ -49,67 +49,37 @@ namespace Petri.Client
         /// <summary>The screen-space curve being drawn with a right-drag (for the HUD preview).</summary>
         public IReadOnlyList<Vector2> RightPathScreen => _rightPath;
 
-        // Control groups 1..9 store (slot, generation) so recall survives entity-index reuse:
-        // a dead unit's slot taken by a new one won't be wrongly re-selected.
+        // Control groups 2..9 store (slot, generation) so recall survives entity-index reuse:
+        // a dead unit's slot taken by a new one won't be wrongly re-selected. Key 1 is the
+        // ARMY key — it drills the hierarchy instead of recalling a group: 1 = all military,
+        // then digit n = nth battalion (left-to-right), then digit m = mth squad of it.
         private readonly List<(int idx, int gen)>[] _groups = new List<(int, int)>[10];
-        // Squad groups: auto-assigned to each squad of a swarm link. Recall selects that squad
-        // ALONE (leader + members, no whole-swarm expansion). Manual Ctrl+N overrides the slot.
-        private readonly (int idx, int gen)[] _squadGroup = new (int, int)[10];
+        // Digit-drill state: 0 = idle, 1 = army selected (next digit picks a battalion),
+        // 2 = battalion selected (next digit picks a squad). A chord expires after a beat;
+        // any other key or click commits the selection at its current level.
+        private const float DrillChordSeconds = 0.4f;
+        private int _drillLevel;
+        private int _drillRoot = -1;
+        private float _drillDeadline;
         private readonly List<int> _tmpLeaders = new List<int>();
         private readonly List<int> _tmpCount = new List<int>();
+        private readonly List<int> _tmpRoots = new List<int>();
 
         public void Bind(MatchBootstrap match, Camera cam)
         {
             _match = match;
             _cam = cam;
-            for (int n = 1; n <= 9; n++) { _groups[n] = new List<(int, int)>(); _squadGroup[n] = (-1, 0); }
+            for (int n = 1; n <= 9; n++) _groups[n] = new List<(int, int)>();
         }
 
-        public bool GroupPopulated(int n) => n >= 1 && n <= 9 && (_groups[n].Count > 0 || SquadGroupValid(n));
+        public bool GroupPopulated(int n) => n >= 2 && n <= 9 && _groups[n].Count > 0;
 
-        private bool SquadGroupValid(int n)
-        {
-            var (idx, gen) = _squadGroup[n];
-            if (idx < 0) return false;
-            var w = _match.Sim.World;
-            return idx < w.HighWater && w.Generation[idx] == gen && w.Kind[idx] == EntityKind.Unit
-                && w.Owner[idx] == MatchBootstrap.HumanPlayer && _match.Defs.Units[w.DefIndex[idx]].IsLeader;
-        }
-
-        /// <summary>The control group auto-assigned to this squad's leader, or 0.</summary>
-        public int GroupOf(int leader)
-        {
-            for (int n = 1; n <= 9; n++)
-                if (SquadGroupValid(n) && _squadGroup[n].idx == leader) return n;
-            return 0;
-        }
-
-        /// <summary>Give every listed squad leader a control group, using free slots 1..9 in
-        /// order. Called by the swarm-link grid, so a link's squads are numbered the moment
-        /// the link is first shown. Existing assignments (and manual groups) are untouched.</summary>
-        public void EnsureSquadGroups(List<int> leaders)
-        {
-            var w = _match.Sim.World;
-            for (int k = 0; k < leaders.Count; k++)
-            {
-                int lead = leaders[k];
-                if (GroupOf(lead) > 0) continue;
-                for (int n = 1; n <= 9; n++)
-                {
-                    if (_groups[n].Count > 0 || SquadGroupValid(n)) continue;
-                    _squadGroup[n] = (lead, w.Generation[lead]);
-                    break;
-                }
-            }
-        }
-
-        /// <summary>Save the current selection (own units/buildings) as control group N.
-        /// Manual assignment overrides any auto squad group in that slot.</summary>
+        /// <summary>Save the current selection (own units/buildings) as control group N
+        /// (2..9 — slot 1 belongs to the army hierarchy).</summary>
         public void AssignControlGroup(int n)
         {
-            if (n < 1 || n > 9) return;
+            if (n < 2 || n > 9) return;
             var w = _match.Sim.World;
-            _squadGroup[n] = (-1, 0);
             var g = _groups[n];
             g.Clear();
             for (int i = 0; i < w.HighWater; i++) // index order: stable snapshot
@@ -124,22 +94,8 @@ namespace Petri.Client
         /// <summary>Recall control group N; only members still alive with a matching generation.</summary>
         public void SelectControlGroup(int n, bool add)
         {
-            if (n < 1 || n > 9) return;
+            if (n < 2 || n > 9) return;
             var w = _match.Sim.World;
-
-            // Auto squad group: recall selects that squad alone (no whole-swarm expansion),
-            // exactly like drilling in via the hierarchy grid.
-            if (SquadGroupValid(n))
-            {
-                int lead = _squadGroup[n].idx;
-                if (!add) { SelectSquadOnly(lead); return; }
-                Selected.Add(lead);
-                for (int i = 0; i < w.HighWater; i++)
-                    if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !_match.Defs.Units[w.DefIndex[i]].IsLeader)
-                        Selected.Add(i);
-                return;
-            }
-
             if (!add) Selected.Clear();
             AttackArmed = false;
             PlacingBuilding = -1;
@@ -380,17 +336,32 @@ namespace Petri.Client
         {
             var w = _match.Sim.World;
 
-            // Control groups on 1..9 are GLOBAL and take priority: Ctrl+N assigns the current
-            // selection, N recalls it (Shift+N adds to the current selection).
+            // Digit keys are GLOBAL and take priority. [1] is the ARMY key — a hierarchical
+            // drill numbered left-to-right like the battle line: 1 selects all military,
+            // 1,n the nth battalion, 1,n,m the mth squad of it (m = 1 is the prime's own).
+            // [2-9] stay classic manual groups: Ctrl+N assigns, N recalls, Shift+N adds.
+            // Ctrl+1 is reserved (the army is not assignable).
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            if (_drillLevel > 0 && Time.unscaledTime > _drillDeadline) CancelDrill();
             for (int n = 1; n <= 9; n++)
             {
                 if (!Input.GetKeyDown(KeyCode.Alpha0 + n)) continue;
-                if (ctrl) AssignControlGroup(n);
+                if (ctrl) { AssignControlGroup(n); CancelDrill(); return; }
+                if (_drillLevel == 1) { DrillToBattalion(n); return; }
+                if (_drillLevel == 2) { DrillToSquad(n); return; }
+                if (n == 1)
+                {
+                    SelectAllMilitary();
+                    _drillLevel = 1;
+                    _drillDeadline = Time.unscaledTime + DrillChordSeconds;
+                }
                 else SelectControlGroup(n, shift);
                 return;
             }
+
+            // Any other key or click commits the drill at its current selection level.
+            if (_drillLevel > 0 && Input.anyKeyDown) CancelDrill();
 
             // Space selects all your military (non-worker) units map-wide.
             if (Input.GetKeyDown(KeyCode.Space)) { SelectAllMilitary(); return; }
@@ -483,6 +454,52 @@ namespace Petri.Client
             AttackArmed = false;
             Selected.Add(anyMember);
             ExpandSelectionToSquads(w);
+        }
+
+        /// <summary>Second drill digit: select the nth battalion — the root leader whose
+        /// battalion number is n (numbered left-to-right). No such battalion → the army
+        /// selection stands and the drill ends.</summary>
+        private void DrillToBattalion(int n)
+        {
+            var w = _match.Sim.World;
+            CancelDrill();
+            for (int i = 0; i < w.HighWater; i++)
+            {
+                if (w.Kind[i] != EntityKind.Unit || w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
+                if (!_match.Defs.Units[w.DefIndex[i]].IsLeader || w.Leader[i] >= 0) continue;
+                if (w.SiblingOrdinal[i] != n) continue;
+                SelectSwarm(i);
+                _drillLevel = 2;
+                _drillRoot = i;
+                _drillDeadline = Time.unscaledTime + DrillChordSeconds;
+                return;
+            }
+        }
+
+        /// <summary>Third drill digit: select the mth squad of the drilled battalion ALONE
+        /// (m = 1 is the prime's own squad). No such squad → the battalion selection stands.</summary>
+        private void DrillToSquad(int m)
+        {
+            var w = _match.Sim.World;
+            int root = _drillRoot;
+            CancelDrill();
+            if (root < 0 || root >= w.HighWater || w.Kind[root] != EntityKind.Unit) return;
+            if (w.Owner[root] != MatchBootstrap.HumanPlayer || !_match.Defs.Units[w.DefIndex[root]].IsLeader) return;
+            if (m == 1) { SelectSquadOnly(root); return; }
+            for (int i = 0; i < w.HighWater; i++)
+            {
+                if (w.Kind[i] != EntityKind.Unit || w.Leader[i] != root) continue;
+                if (!_match.Defs.Units[w.DefIndex[i]].IsLeader) continue;
+                if (w.SiblingOrdinal[i] != m) continue;
+                SelectSquadOnly(i);
+                return;
+            }
+        }
+
+        private void CancelDrill()
+        {
+            _drillLevel = 0;
+            _drillRoot = -1;
         }
 
         /// <summary>Select every military (non-worker) unit you own — soldiers, spitters, and
@@ -653,12 +670,17 @@ namespace Petri.Client
         }
 
         /// <summary>Link every other selected leader under the primary (prime) leader — their
-        /// squads become limbs of one super-swarm. The sim refuses cycles.</summary>
+        /// squads become limbs of one battalion. The sim refuses cycles, deep trees, and
+        /// oversize battalions.</summary>
         public void LinkSelected()
         {
             var w = _match.Sim.World;
             int prime = PrimarySelected();
             if (prime < 0 || w.Kind[prime] != EntityKind.Unit || !_match.Defs.Units[w.DefIndex[prime]].IsLeader) return;
+            // The hierarchy is two levels (battalion prime → squads): linking under a limb
+            // would reject in the sim, so aim at its battalion's prime instead.
+            int guard = 0;
+            while (w.Leader[prime] >= 0 && guard++ < 64) prime = w.Leader[prime];
             foreach (int e in Selected)
             {
                 if (e == prime || w.Kind[e] != EntityKind.Unit) continue;
@@ -724,6 +746,16 @@ namespace Petri.Client
             // (resume an abandoned build / add extra hands); everyone else moves normally.
             int site = FindOwnSiteAt(w, wp);
 
+            // ARMY FRONT: two or more battalions ordered together spread into one line
+            // through the click, left-to-right by battalion number, instead of piling
+            // every prime onto the same point.
+            _tmpRoots.Clear();
+            foreach (int e in Selected)
+                if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == MatchBootstrap.HumanPlayer
+                    && _match.Defs.Units[w.DefIndex[e]].IsLeader && w.Leader[e] < 0)
+                    _tmpRoots.Add(e);
+            bool armyFront = _tmpRoots.Count >= 2;
+
             int cx = Mathf.RoundToInt(wp.x * 100f), cy = Mathf.RoundToInt(wp.y * 100f);
             bool any = false;
             foreach (int e in Selected)
@@ -748,12 +780,67 @@ namespace Petri.Client
                     continue;
                 }
                 if (_match.Defs.Units[w.DefIndex[e]].IsLeader)
-                    _match.Enqueue(new Command { Type = CommandType.FormationMove, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
+                {
+                    if (!armyFront) // spread primes get their FormationMove from IssueArmyFront
+                        _match.Enqueue(new Command { Type = CommandType.FormationMove, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
+                }
                 else
                     _match.Enqueue(new Command { Type = CommandType.Move, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
                 any = true;
             }
+            if (armyFront) IssueArmyFront(w, wp, queue);
             if (any) _match.View.Ping(new Vector3(wp.x, wp.y, 0f), GameView.MovePing);
+        }
+
+        /// <summary>Order 2+ battalions as one army front: a line through the click,
+        /// perpendicular to the approach, battalion 1 anchoring the LEFT end. Each prime
+        /// stands at the left edge of its battalion's span so its squads (which extend to
+        /// the prime's right, one spacing per ordinal) meet the next battalion cleanly.
+        /// Every prime shares the approach facing — one front, echeloned by number.</summary>
+        private void IssueArmyFront(SimWorld w, Vector3 wp, bool queue)
+        {
+            // Left-to-right by battalion number. Client-side sort is fine: only the
+            // resulting integer command payloads ever reach the sim.
+            _tmpRoots.Sort((a, b) => w.SiblingOrdinal[a] != w.SiblingOrdinal[b]
+                ? w.SiblingOrdinal[a].CompareTo(w.SiblingOrdinal[b]) : a.CompareTo(b));
+
+            float mx = 0f, my = 0f;
+            foreach (int r in _tmpRoots)
+            {
+                mx += w.Pos[r].X.Raw / (float)Fix.OneRaw;
+                my += w.Pos[r].Y.Raw / (float)Fix.OneRaw;
+            }
+            var dir = new Vector2(wp.x - mx / _tmpRoots.Count, wp.y - my / _tmpRoots.Count);
+            if (dir.sqrMagnitude < 1e-4f) dir = Vector2.right;
+            dir.Normalize();
+            var left = new Vector2(-dir.y, dir.x);
+
+            float spacing = w.Rules.LinkSpacingCenti / 100f;
+            float total = 0f;
+            foreach (int r in _tmpRoots) total += spacing * SquadsOf(w, r);
+            float edge = total * 0.5f; // the line centers on the click; battalion 1 starts left
+            foreach (int root in _tmpRoots)
+            {
+                var target = new Vector2(wp.x, wp.y) + left * edge;
+                _match.Enqueue(new Command
+                {
+                    Type = CommandType.FormationMove, A = root,
+                    B = Mathf.RoundToInt(target.x * 100f), C = Mathf.RoundToInt(target.y * 100f),
+                    D = queue ? 1 : 0,
+                    E = Mathf.RoundToInt(dir.x * 100f), F = Mathf.RoundToInt(dir.y * 100f),
+                });
+                edge -= spacing * SquadsOf(w, root); // the next battalion starts past this span
+            }
+        }
+
+        /// <summary>Squads in a battalion: the prime plus its linked limb leaders.</summary>
+        private int SquadsOf(SimWorld w, int root)
+        {
+            int n = 1;
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == root && _match.Defs.Units[w.DefIndex[i]].IsLeader)
+                    n++;
+            return n;
         }
 
         private bool AncestorSelected(SimWorld w, int e)

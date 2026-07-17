@@ -538,8 +538,6 @@ namespace Petri.Client
         /// </summary>
         private void DrawSwarmLinkGrid(SimWorld w, DefDatabase defs, InputController input, int root, Rect r)
         {
-            input.EnsureSquadGroups(_treeLeaders); // every squad in a link gets a control group
-
             int totalUnits = 0;
             float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
             for (int k = 0; k < _treeLeaders.Count; k++)
@@ -579,8 +577,11 @@ namespace Petri.Client
 
                 bool isSpine = w.Leader[lead] < 0;
                 bool selected = input.Selected.Contains(lead);
-                int group = input.GroupOf(lead);
-                string label = (group > 0 ? $"<b>{group}</b>\n" : "\n") + (isSpine ? $"★{members}" : members.ToString());
+                // Hierarchical address: battalion-squad (the prime is squad 1) — the same
+                // numbers the 1,n,m digit drill selects by.
+                int battalion = w.SiblingOrdinal[root];
+                int squadNo = isSpine ? 1 : w.SiblingOrdinal[lead];
+                string label = $"<b>{battalion}-{squadNo}</b>\n" + (isSpine ? $"★{members}" : members.ToString());
                 GUI.backgroundColor = selected ? Color.white : (isSpine ? new Color(1f, 0.9f, 0.35f) : new Color(1.6f, 1.7f, 1.6f));
                 if (GUI.Button(new Rect(bx, by, boxW, boxH), label, _circleButton))
                     input.SelectSquadOnly(lead);
