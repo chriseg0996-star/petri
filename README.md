@@ -29,8 +29,9 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
    matches end with a victory banner back to the menu.
 3. Controls (classic RTS — every unit obeys direct orders): **L-click/drag** select
    (dbl-click = all of type, **Space** = all military) · **R-click** move/rally/attack
-   (multi-unit moves land in a spread grid centered on the click) · **R-drag** line move
-   (units spread along the drawn curve) · **Shift+R-drag** set facing · **[A]** attack-move ·
+   (multi-unit moves land in a spread grid centered on the click) · **R-drag** formation
+   line (a rank block centered on the drawn curve — line length sets the frontage, down to
+   two ranks; melee front, ranged rear) · **Shift+R-drag** set facing · **[A]** attack-move ·
    **Ctrl+[1-9]/[1-9]** control groups · **[B]** build · **[S]** stop ·
    **arrows** or **middle-drag** pan · **scroll** zoom.
 

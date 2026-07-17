@@ -598,10 +598,11 @@ namespace Petri.Client
                 : _match.Defs.Units[w.DefIndex[e]].CollisionRadiusCenti / 100f;
 
         /// <summary>
-        /// Beyond-All-Reason-style line move: every selected unit is spread evenly by
-        /// arc-length along the ACTUAL path drawn with the mouse — following its curve,
-        /// not a straight chord. Units face their travel direction; Shift+R-drag aims an
-        /// explicit front once they stand.
+        /// Drawn-line RANK FORMATION: the stroke is the formation's center line — the block
+        /// of selected units forms up straddling it, following its curve. Line length sets
+        /// the frontage (units per rank); a longer stroke flattens the block down to a
+        /// minimum of two ranks, a shorter one deepens it. Melee holds the front ranks,
+        /// ranged stands behind, unarmed brings up the rear.
         /// </summary>
         private void IssueFormationPath(SimWorld w)
         {
@@ -627,22 +628,82 @@ namespace Petri.Client
             foreach (int e in Selected)
                 if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == MatchBootstrap.HumanPlayer) _lineUnits.Add(e);
             if (_lineUnits.Count == 0) return;
-
-            // Assign movers to slots in arc-length order of their current position → no crossing.
-            _lineUnits.Sort((p, q) => NearestArcLength(UnitPos(w, p)).CompareTo(NearestArcLength(UnitPos(w, q))));
-
             int n = _lineUnits.Count;
+
+            if (n == 1)
+            {
+                Vector2 solo = SampleAt(total * 0.5f, out _);
+                _match.Enqueue(new Command
+                {
+                    Type = CommandType.Move, A = _lineUnits[0],
+                    B = Mathf.RoundToInt(solo.x * 100f), C = Mathf.RoundToInt(solo.y * 100f),
+                });
+                _match.View.Ping(new Vector3(solo.x, solo.y, 0f), GameView.MovePing);
+                return;
+            }
+
+            // The formation's FRONT: perpendicular to the drawn line's chord, pointing away
+            // from the group — the side the army is advancing toward.
+            Vector2 centroid = Vector2.zero;
+            foreach (int e in _lineUnits) centroid += UnitPos(w, e);
+            centroid /= n;
+            Vector2 chord = _worldPath[_worldPath.Count - 1] - _worldPath[0];
+            Vector2 refFront = new Vector2(-chord.y, chord.x);
+            if (refFront.sqrMagnitude < 1e-6f) refFront = Vector2.up;
+            Vector2 mid = SampleAt(total * 0.5f, out _);
+            if (Vector2.Dot(refFront, mid - centroid) < 0f) refFront = -refFront;
+
+            // RANK FORMATION centered on the drawn line: the line's length sets how many
+            // units stand abreast, so a longer stroke flattens the block down to a minimum
+            // of two ranks; a short stroke deepens it. Melee fills the front ranks, ranged
+            // stands behind, unarmed units bring up the rear.
+            float spacing = 0.4f;
+            foreach (int e in _lineUnits)
+                spacing = Mathf.Max(spacing, 2f * _match.Defs.Units[w.DefIndex[e]].CollisionRadiusCenti / 100f + 0.4f);
+            int perRowCap = Mathf.Max(1, Mathf.FloorToInt(total / spacing) + 1);
+            int rows = Mathf.Max(2, Mathf.CeilToInt(n / (float)perRowCap));
+            int perRow = Mathf.CeilToInt(n / (float)rows);
+
+            // Fill order decides the ranks: melee first (front), then ranged, then unarmed.
+            // Within a class, arc-length order keeps paths from crossing.
+            _lineUnits.Sort((a, b) =>
+            {
+                int ca = FormationRank(w, a), cb = FormationRank(w, b);
+                if (ca != cb) return ca.CompareTo(cb);
+                float sa = NearestArcLength(UnitPos(w, a)), sb = NearestArcLength(UnitPos(w, b));
+                if (sa != sb) return sa.CompareTo(sb);
+                return a.CompareTo(b);
+            });
+
             for (int k = 0; k < n; k++)
             {
-                float s = n == 1 ? total * 0.5f : total * (k / (float)(n - 1));
-                Vector2 slot = SampleAt(s, out _);
+                int row = k / perRow, idx = k % perRow;
+                int rowLen = Mathf.Min(perRow, n - row * perRow);
+                float s = total * (2 * idx + 1) / (2f * rowLen); // midpoint sampling centers every rank
+                Vector2 slot = SampleAt(s, out Vector2 tan);
+                Vector2 perp = new Vector2(-tan.y, tan.x);
+                if (Vector2.Dot(perp, refFront) < 0f) perp = -perp;
+                perp.Normalize();
+                // Ranks straddle the drawn line: front ranks ahead of it, rear ranks behind.
+                float frontOff = ((rows - 1) * 0.5f - row) * spacing;
+                Vector2 pos = slot + perp * frontOff;
                 _match.Enqueue(new Command
                 {
                     Type = CommandType.Move, A = _lineUnits[k],
-                    B = Mathf.RoundToInt(slot.x * 100f), C = Mathf.RoundToInt(slot.y * 100f),
+                    B = Mathf.RoundToInt(pos.x * 100f), C = Mathf.RoundToInt(pos.y * 100f),
                 });
-                _match.View.Ping(new Vector3(slot.x, slot.y, 0f), GameView.MovePing);
+                if (k < 24) // destination ghosts, capped so huge armies don't spam
+                    _match.View.Ping(new Vector3(pos.x, pos.y, 0f), GameView.MovePing);
             }
+        }
+
+        /// <summary>Which rank block a unit belongs to in a drawn formation: 0 = melee
+        /// (front), 1 = ranged (they fire projectiles), 2 = unarmed (rear).</summary>
+        private int FormationRank(SimWorld w, int e)
+        {
+            var def = _match.Defs.Units[w.DefIndex[e]];
+            if (def.AttackDamage <= 0) return 2;
+            return def.ProjectileSpeedCenti > 0 ? 1 : 0;
         }
 
         private Vector2 UnitPos(SimWorld w, int e) =>

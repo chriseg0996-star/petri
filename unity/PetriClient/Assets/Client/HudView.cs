@@ -376,7 +376,7 @@ namespace Petri.Client
             else if (_match.Input != null && _match.Input.AttackArmed)
                 hint = "<color=#ff8a80><b>ATTACK-MOVE</b> — left-click a target point · right-click / Esc to cancel</color>";
             else
-                hint = "L-click select · R-click move / attack · R-drag line move · Shift+R-drag face · [A] attack-move · Ctrl+[1-9]/[1-9] groups · [Space] all military · [B] build · [S] stop";
+                hint = "L-click select · R-click move / attack · R-drag formation line (melee front, ranged rear) · Shift+R-drag face · [A] attack-move · Ctrl+[1-9]/[1-9] groups · [Space] all military · [B] build · [S] stop";
             GUI.Label(new Rect(12, Screen.height - 24, 1800, 22), hint, _small);
         }
 
