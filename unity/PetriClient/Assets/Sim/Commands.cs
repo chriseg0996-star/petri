@@ -133,6 +133,7 @@ namespace Petri.Core
                         w.HasLimbStation[c.A] = false;
                         w.Settled[c.A] = false;
                         w.AttackMove[c.A] = false;
+                        w.SiblingOrdinal[c.A] = 0; // becomes the newest (rightmost) battalion
                         return;
                     }
 
@@ -141,8 +142,25 @@ namespace Petri.Core
 
                     if (unitDef.IsLeader)
                     {
-                        // Leader→leader link: the squad becomes a limb of B's swarm (a tree).
-                        // Links don't consume member capacity, but cycles must be impossible.
+                        // Leader→leader link: A's squad becomes a limb of battalion B. The
+                        // hierarchy is exactly two levels — battalion prime, then squads — so
+                        // the drill digits (1,n,m) always reach every echelon:
+                        //   · B must itself be a root (no linking under a limb),
+                        //   · A must have no leader children (a prime can't become a limb
+                        //     without unlinking its own limbs first),
+                        //   · the battalion holds at most MaxSquadsPerBattalion squads
+                        //     (prime included).
+                        if (w.Leader[c.B] >= 0) { Reject(w); return; }
+                        int squads = 1; // the prime is squad 1
+                        for (int i = 0; i < w.HighWater; i++)
+                        {
+                            if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
+                            if (w.Leader[i] == c.A) { Reject(w); return; }
+                            if (w.Leader[i] == c.B) squads++;
+                        }
+                        if (squads >= w.Rules.MaxSquadsPerBattalion) { Reject(w); return; }
+                        // Cycles are impossible given the checks above; keep the guard anyway
+                        // (cheap, and defensive against future rule changes).
                         int cur = c.B, guard = 0;
                         while (cur >= 0 && guard++ <= w.HighWater)
                         {
@@ -155,6 +173,7 @@ namespace Petri.Core
                         w.Settled[c.A] = false;
                         w.AttackMove[c.A] = false; // posture now flows from the prime
                         w.QueueCount[c.A] = 0;     // the prime's plan rules now
+                        w.SiblingOrdinal[c.A] = 0; // joins as the newest (rightmost) squad
                         return;
                     }
 

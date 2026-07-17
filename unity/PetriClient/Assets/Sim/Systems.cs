@@ -162,6 +162,7 @@ namespace Petri.Core
                     w.Leader[i] = -1;
                     w.Settled[i] = false;
                     w.AttackMove[i] = false; // stale posture must not keep driving it
+                    w.SiblingOrdinal[i] = 0; // re-enters its sibling line at the right end
                     if (!selfLeader) w.Leaderless[i] = true;
                 }
                 else if (!selfLeader) squad[lead]++;
@@ -227,6 +228,46 @@ namespace Petri.Core
                 squad[emptiest]++;
             }
 
+            // Pass 1d: sibling ordinals — every leader's stable left-to-right position among
+            // its siblings. Roots of one player are battalion siblings (1..N); limbs of one
+            // prime are squad siblings (2..N — the prime itself is squad 1). Assigned ordinals
+            // compact preserving relative order (equal ordinals break to the lower index);
+            // unassigned leaders (fresh spawns, just-relinked) append after, in index order —
+            // a new battalion or squad always joins at the right end of the line. Ranks are
+            // computed from pre-pass values into scratch and copied back afterward: in-place
+            // writes mid-scan would let later leaders read half-updated state and desync peers.
+            int[] ord = w.ScratchLinkCount;
+            for (int i = 0; i < w.HighWater; i++)
+            {
+                if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
+                int prime = w.Leader[i];
+                int self = w.SiblingOrdinal[i];
+                int rank = prime < 0 ? 1 : 2;
+                for (int j = 0; j < w.HighWater; j++)
+                {
+                    if (j == i || w.Kind[j] != EntityKind.Unit || !defs.Units[w.DefIndex[j]].IsLeader) continue;
+                    bool sibling = prime < 0
+                        ? w.Leader[j] < 0 && w.Owner[j] == w.Owner[i]
+                        : w.Leader[j] == prime;
+                    if (!sibling) continue;
+                    int other = w.SiblingOrdinal[j];
+                    if (self > 0)
+                    {
+                        if (other > 0 && (other < self || (other == self && j < i))) rank++;
+                    }
+                    else
+                    {
+                        // Unassigned: every assigned sibling comes first, then earlier
+                        // unassigned ones (index order keeps the append deterministic).
+                        if (other > 0 || j < i) rank++;
+                    }
+                }
+                ord[i] = rank;
+            }
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Unit && defs.Units[w.DefIndex[i]].IsLeader)
+                    w.SiblingOrdinal[i] = (byte)ord[i];
+
             // Pass 2: leaderless units retreat to the nearest friendly leader with capacity
             // and join once inside the join radius. SEEKING units (produced by an
             // auto-assimilate building when every leader was full) also join a capacity
@@ -269,13 +310,12 @@ namespace Petri.Core
             }
 
             // Pass 3a: linked sub-leaders are limbs of a larger swarm — each holds a station
-            // abreast of its prime (alternating right/left) and inherits the prime's facing,
-            // so one order to the prime moves the whole super-formation as one body.
+            // abreast of its prime, arrayed left-to-right by squad ordinal (the prime is
+            // squad 1, leftmost), and inherits the prime's facing, so one order to the prime
+            // moves the whole battle line as one body.
             Fix slack = Fix.Ratio(60, 100);
             Fix regroupR = Fix.Ratio(w.Rules.RegroupRadiusCenti, 100);
             Fix linkSpacing = Fix.Ratio(w.Rules.LinkSpacingCenti, 100);
-            int[] linkK = w.ScratchLinkCount;
-            Array.Clear(linkK, 0, w.HighWater);
             for (int i = 0; i < w.HighWater; i++)
             {
                 if (w.Kind[i] != EntityKind.Unit || !defs.Units[w.DefIndex[i]].IsLeader) continue;
@@ -292,7 +332,6 @@ namespace Petri.Core
                     w.Settled[i] = false;
                     continue;
                 }
-                int k = linkK[prime]++;
                 FixVec2 pf = w.Facing[prime];
                 if (pf.LengthSq == Fix.Zero) pf = new FixVec2(Fix.One, Fix.Zero);
                 w.Facing[i] = pf; // the limb faces with the spine
@@ -314,8 +353,9 @@ namespace Petri.Core
                 }
                 else
                 {
-                    Fix mag = linkSpacing * Fix.FromInt((k >> 1) + 1);
-                    Fix side = (k & 1) == 0 ? mag : -mag;
+                    // Left-to-right battle line: squad N stands N-1 spacings to the prime's
+                    // right. pPerp is the LEFT of the facing, so right is negative.
+                    Fix side = -(linkSpacing * Fix.FromInt(w.SiblingOrdinal[i] - 1));
                     station = w.ClampToMap(anchor + pPerp * side);
                 }
 

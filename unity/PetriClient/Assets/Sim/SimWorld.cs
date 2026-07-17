@@ -128,7 +128,7 @@ namespace Petri.Core
         public readonly int[] ScratchSquadCount;
         public readonly int[] ScratchBandCount;
         public readonly int[] ScratchBandCursor;
-        public readonly int[] ScratchLinkCount;
+        public readonly int[] ScratchLinkCount; // Pass 1d write buffer for sibling-ordinal ranks
         public readonly bool[] ScratchConnected; // per-building: linked to an HQ this tick
         public readonly int[] ScratchBuilders;  // per-site: workers in build reach this tick
         // Per-tick index lists (ascending, so scans keep their lowest-index tie-breaks) that
