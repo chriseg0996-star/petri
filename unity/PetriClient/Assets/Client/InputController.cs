@@ -478,17 +478,58 @@ namespace Petri.Client
 
             int cx = Mathf.RoundToInt(wp.x * 100f), cy = Mathf.RoundToInt(wp.y * 100f);
             bool any = false;
+            _lineUnits.Clear();
             foreach (int e in Selected)
             {
-                if (w.Kind[e] != EntityKind.Unit) continue;
+                if (w.Kind[e] != EntityKind.Unit || w.Owner[e] != MatchBootstrap.HumanPlayer) continue;
                 if (site >= 0 && _match.Defs.Units[w.DefIndex[e]].IsWorker)
                 {
                     _match.Enqueue(new Command { Type = CommandType.AssignBuild, A = e, B = site });
                     any = true;
                     continue;
                 }
-                _match.Enqueue(new Command { Type = CommandType.Move, A = e, B = cx, C = cy, D = queue ? 1 : 0 });
+                _lineUnits.Add(e);
+            }
+
+            if (_lineUnits.Count == 1)
+            {
+                _match.Enqueue(new Command { Type = CommandType.Move, A = _lineUnits[0], B = cx, C = cy, D = queue ? 1 : 0 });
                 any = true;
+            }
+            else if (_lineUnits.Count >= 2)
+            {
+                // SPREAD MOVE: a compact grid of one slot per unit, CENTERED on the click,
+                // instead of piling everyone onto the same point to jitter apart. Integer
+                // math only — identical clicks yield identical command payloads anywhere.
+                int spacingCenti = 40;
+                foreach (int e in _lineUnits)
+                    spacingCenti = Mathf.Max(spacingCenti, 2 * _match.Defs.Units[w.DefIndex[e]].CollisionRadiusCenti + 40);
+                int n = _lineUnits.Count;
+                int cols = 1;
+                while (cols * cols < n) cols++;
+                int rows = (n + cols - 1) / cols;
+
+                // Slots fill north-to-south; hand them out northernmost-first (west-to-east,
+                // entity index breaks ties) so units roughly keep their relative positions
+                // and don't cross. Pure integer sort keys from the Fix raws.
+                _lineUnits.Sort((a, b) =>
+                {
+                    if (w.Pos[a].Y.Raw != w.Pos[b].Y.Raw) return w.Pos[b].Y.Raw.CompareTo(w.Pos[a].Y.Raw);
+                    if (w.Pos[a].X.Raw != w.Pos[b].X.Raw) return w.Pos[a].X.Raw.CompareTo(w.Pos[b].X.Raw);
+                    return a.CompareTo(b);
+                });
+
+                for (int k = 0; k < n; k++)
+                {
+                    int row = k / cols, col = k % cols;
+                    int rowLen = Mathf.Min(cols, n - row * cols); // short last row stays centered
+                    int offX = (2 * col - (rowLen - 1)) * spacingCenti / 2;
+                    int offY = ((rows - 1) - 2 * row) * spacingCenti / 2;
+                    _match.Enqueue(new Command { Type = CommandType.Move, A = _lineUnits[k], B = cx + offX, C = cy + offY, D = queue ? 1 : 0 });
+                    if (k < 24) // destination ghosts, capped so huge armies don't spam
+                        _match.View.Ping(new Vector3((cx + offX) / 100f, (cy + offY) / 100f, 0f), GameView.MovePing);
+                }
+                return;
             }
             if (any) _match.View.Ping(new Vector3(wp.x, wp.y, 0f), GameView.MovePing);
         }
