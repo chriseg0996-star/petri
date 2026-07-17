@@ -2276,4 +2276,236 @@ namespace Petri.Tests
             Assert.Equal(sim.StateHash(), sim2.StateHash());
         }
     }
+
+    /// <summary>The army hierarchy: sibling ordinals (battalion/squad numbers) that double
+    /// as left-to-right battle-line positions. Roots = battalions 1..N per player; limbs =
+    /// squads 2..N within a battalion (the prime is implicitly squad 1, leftmost).</summary>
+    public class HierarchyTests
+    {
+        private const short LeaderDef = 0;  // TinyDefs sorted ids: test.leader, test.soldier, test.worker
+        private const short SoldierDef = 1;
+
+        private static int SpawnLeader(SimWorld w, byte owner, int x, int y = 20) =>
+            w.Spawn(EntityKind.Unit, LeaderDef, owner, new FixVec2(Fix.FromInt(x), Fix.FromInt(y)), 100);
+
+        private static void Link(Simulation sim, int limb, int prime) =>
+            CommandSystem.Apply(sim.World, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.AssignToLeader, A = limb, B = prime });
+
+        [Fact]
+        public void NewRootLeadersGetSequentialBattalionOrdinals()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int r1 = SpawnLeader(w, 0, 10);
+            int r2 = SpawnLeader(w, 0, 14);
+            int r3 = SpawnLeader(w, 0, 18);
+            int e1 = SpawnLeader(w, 1, 30); // the enemy numbers its own battalions from 1
+
+            SwarmSystem.Tick(w, sim.Defs);
+
+            Assert.Equal(1, (int)w.SiblingOrdinal[r1]);
+            Assert.Equal(2, (int)w.SiblingOrdinal[r2]);
+            Assert.Equal(3, (int)w.SiblingOrdinal[r3]);
+            Assert.Equal(1, (int)w.SiblingOrdinal[e1]);
+        }
+
+        [Fact]
+        public void NewLimbGetsNextSquadOrdinalFromTwo()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int prime = SpawnLeader(w, 0, 20);
+            int l1 = SpawnLeader(w, 0, 24);
+            int l2 = SpawnLeader(w, 0, 28);
+            Link(sim, l1, prime);
+            Link(sim, l2, prime);
+
+            SwarmSystem.Tick(w, sim.Defs);
+
+            Assert.Equal(1, (int)w.SiblingOrdinal[prime]); // battalion 1 (its root scope)
+            Assert.Equal(2, (int)w.SiblingOrdinal[l1]);    // squads count from 2: the prime is 1
+            Assert.Equal(3, (int)w.SiblingOrdinal[l2]);
+        }
+
+        [Fact]
+        public void BattalionOrdinalsCompactOnDeath()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int r1 = SpawnLeader(w, 0, 10);
+            int r2 = SpawnLeader(w, 0, 14);
+            int r3 = SpawnLeader(w, 0, 18);
+            SwarmSystem.Tick(w, sim.Defs);
+
+            w.Despawn(r2);
+            SwarmSystem.Tick(w, sim.Defs);
+
+            Assert.Equal(1, (int)w.SiblingOrdinal[r1]); // relative order survives the gap
+            Assert.Equal(2, (int)w.SiblingOrdinal[r3]);
+        }
+
+        [Fact]
+        public void SquadOrdinalsCompactOnLimbDeath()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int prime = SpawnLeader(w, 0, 20);
+            int l1 = SpawnLeader(w, 0, 24);
+            int l2 = SpawnLeader(w, 0, 28);
+            int l3 = SpawnLeader(w, 0, 32);
+            Link(sim, l1, prime);
+            Link(sim, l2, prime);
+            Link(sim, l3, prime);
+            SwarmSystem.Tick(w, sim.Defs);
+            Assert.Equal(4, (int)w.SiblingOrdinal[l3]);
+
+            w.Despawn(l2);
+            SwarmSystem.Tick(w, sim.Defs);
+
+            Assert.Equal(2, (int)w.SiblingOrdinal[l1]);
+            Assert.Equal(3, (int)w.SiblingOrdinal[l3]);
+        }
+
+        [Fact]
+        public void RelinkAppendsAtEndOfNewSiblingSet()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int r1 = SpawnLeader(w, 0, 10);
+            int r2 = SpawnLeader(w, 0, 14);
+            int r3 = SpawnLeader(w, 0, 18);
+            int limb = SpawnLeader(w, 0, 22);
+            Link(sim, limb, r2); // battalion r2 already holds squad 2
+            SwarmSystem.Tick(w, sim.Defs);
+            Assert.Equal(3, (int)w.SiblingOrdinal[r3]);
+
+            Link(sim, r3, r2); // battalion 3 folds into battalion 2...
+            SwarmSystem.Tick(w, sim.Defs);
+
+            Assert.Equal(3, (int)w.SiblingOrdinal[r3]); // ...as its newest squad (after limb's 2)
+            Assert.Equal(1, (int)w.SiblingOrdinal[r1]); // remaining battalions renumber
+            Assert.Equal(2, (int)w.SiblingOrdinal[r2]);
+        }
+
+        [Fact]
+        public void LimbStationsRunLeftToRightByOrdinal()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int prime = SpawnLeader(w, 0, 20); // spawns facing +x, so LEFT is +y
+            int l1 = SpawnLeader(w, 0, 26);
+            int l2 = SpawnLeader(w, 0, 30);
+            Link(sim, l1, prime);
+            Link(sim, l2, prime);
+
+            SwarmSystem.Tick(w, sim.Defs);
+
+            // LinkSpacingCenti 500 = 5u: squad 2 one spacing right of the prime, squad 3 two.
+            Assert.True(w.HasMoveOrder[l1]);
+            Assert.True(w.HasMoveOrder[l2]);
+            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.Zero, Fix.FromInt(-5)), w.MoveTarget[l1]);
+            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.Zero, Fix.FromInt(-10)), w.MoveTarget[l2]);
+        }
+
+        [Fact]
+        public void FreeformLimbStationStillOverridesOrdinal()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int prime = SpawnLeader(w, 0, 20);
+            int limb = SpawnLeader(w, 0, 26);
+            Link(sim, limb, prime);
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetLimbStation, A = limb, B = -400, C = 0 });
+
+            SwarmSystem.Tick(w, sim.Defs);
+
+            // The drawn rearguard station wins over the ordinal's (0, -5) slot.
+            Assert.Equal(w.Pos[prime] + new FixVec2(Fix.FromInt(-4), Fix.Zero), w.MoveTarget[limb]);
+        }
+
+        [Fact]
+        public void SetSiblingOrdinalSwaps()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int r1 = SpawnLeader(w, 0, 10);
+            int r2 = SpawnLeader(w, 0, 14);
+            int prime = SpawnLeader(w, 0, 20);
+            int limb = SpawnLeader(w, 0, 24);
+            int soldier = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(11), Fix.FromInt(20)), 60);
+            Link(sim, limb, prime);
+            SwarmSystem.Tick(w, sim.Defs);
+
+            // r1 and r2 trade battalion numbers.
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 2 });
+            Assert.Equal(0, w.RejectedCommands);
+            Assert.Equal(2, (int)w.SiblingOrdinal[r1]);
+            Assert.Equal(1, (int)w.SiblingOrdinal[r2]);
+
+            // The swap is the new stable order: the maintenance pass preserves it.
+            SwarmSystem.Tick(w, sim.Defs);
+            Assert.Equal(2, (int)w.SiblingOrdinal[r1]);
+            Assert.Equal(1, (int)w.SiblingOrdinal[r2]);
+
+            // Rejections: ordinal 0, own ordinal, unheld ordinal, non-leader, squad slot 1.
+            int rejected = w.RejectedCommands;
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 0 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 2 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = r1, B = 7 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = soldier, B = 1 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetSiblingOrdinal, A = limb, B = 1 });
+            Assert.Equal(rejected + 5, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void DeepLinksAndOversizeBattalionsReject()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int prime = SpawnLeader(w, 0, 20);
+            int limb = SpawnLeader(w, 0, 24);
+            int extra = SpawnLeader(w, 0, 28);
+            int root = SpawnLeader(w, 0, 32);
+            Link(sim, limb, prime);
+            Assert.Equal(0, w.RejectedCommands);
+
+            // Depth cap: no linking under a limb, and no relinking a prime that has limbs.
+            Link(sim, extra, limb);
+            Assert.Equal(1, w.RejectedCommands);
+            Link(sim, prime, root);
+            Assert.Equal(2, w.RejectedCommands);
+
+            // Squad cap: a battalion holds at most MaxSquadsPerBattalion squads (prime included).
+            int cap = w.Rules.MaxSquadsPerBattalion; // 9 → prime + 8 limbs
+            for (int k = 2; k < cap; k++) Link(sim, SpawnLeader(w, 0, 10 + k), prime); // fills to 9 squads
+            Assert.Equal(2, w.RejectedCommands);
+            Link(sim, SpawnLeader(w, 0, 8), prime); // squad 10 refused
+            Assert.Equal(3, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void OrdinalsAreHashedAndSlotReuseResets()
+        {
+            var simA = TestWorlds.NewSim(42, new CommandLog());
+            var simB = TestWorlds.NewSim(42, new CommandLog());
+            int a1 = SpawnLeader(simA.World, 0, 10), b1 = SpawnLeader(simB.World, 0, 10);
+            int a2 = SpawnLeader(simA.World, 0, 14), b2 = SpawnLeader(simB.World, 0, 14);
+            simA.Tick();
+            simB.Tick();
+            Assert.Equal(simA.StateHash(), simB.StateHash());
+
+            // Swapping battalion numbers on one sim alone diverges the fingerprint:
+            // ordinals are real hashed state, not client-side labels.
+            CommandSystem.Apply(simA.World, simA.Defs, new Command { Tick = 1, Player = 0, Type = CommandType.SetSiblingOrdinal, A = a1, B = 2 });
+            Assert.NotEqual(simA.StateHash(), simB.StateHash());
+
+            // Slot reuse: a freed leader slot hands no stale ordinal to its next occupant.
+            var w = simB.World;
+            Assert.Equal(1, (int)w.SiblingOrdinal[b1]);
+            w.Despawn(b1);
+            int reused = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(12), Fix.FromInt(20)), 60);
+            Assert.Equal(b1, reused);
+            Assert.Equal(0, (int)w.SiblingOrdinal[reused]);
+        }
+    }
 }
