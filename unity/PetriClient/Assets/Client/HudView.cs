@@ -357,12 +357,13 @@ namespace Petri.Client
             }
             GUI.Label(new Rect(12, 8, 900, 30 + barLines * 17), _sb.ToString(), _label);
 
-            // Control-group tray: bright = populated. Ctrl+N assigns, N recalls.
+            // Group tray: slot 1 is the army key (always live — the hierarchy drill);
+            // 2-9 light up when a manual group is stored. Ctrl+N assigns, N recalls.
             if (_match.Input != null)
             {
                 _sb.Length = 0;
-                _sb.Append("Groups ");
-                for (int n = 1; n <= 9; n++)
+                _sb.Append("Groups <b><color=#ffd94a>1</color></b><color=#999999>=Army</color> ");
+                for (int n = 2; n <= 9; n++)
                     _sb.Append(_match.Input.GroupPopulated(n) ? $"<b><color=#ffd94a>{n}</color></b> " : $"<color=#666666>{n}</color> ");
                 GUI.Label(new Rect(12, 8 + 18 * (barLines + 1), 900, 20), _sb.ToString(), _small);
             }
@@ -373,7 +374,7 @@ namespace Petri.Client
             else if (_match.Input != null && _match.Input.AttackArmed)
                 hint = "<color=#ff8a80><b>ATTACK-MOVE</b> — left-click a target point · right-click / Esc to cancel</color>";
             else
-                hint = "L-click select · [Space] all military · R-click move/rally · R-drag formation · Shift+R-drag face · [A] attack · [E] encircle · [G] assim · [L]ink [O] pace · Ctrl+[1-9]/[1-9] groups · [B] build · [S] stop";
+                hint = "L-click select · [1] army, 1,n battalion, 1,n,m squad · Ctrl+[2-9]/[2-9] groups · R-click move/rally · R-drag formation · Shift+R-drag face · [A] attack · [E] encircle · [G] assim · [L]ink [O] pace · [B] build · [S] stop";
             GUI.Label(new Rect(12, Screen.height - 24, 1800, 22), hint, _small);
         }
 
@@ -474,10 +475,12 @@ namespace Petri.Client
                     else squad++;
                 }
                 _sb.Append($"Squad <b>{squad}</b> / {w.Rules.MaxUnitsPerLeader}{(w.Stance[e] ? "   <color=#ffb3a0><b>ENCIRCLING</b></color>" : "")}\n");
-                if (limbs > 0)
-                    _sb.Append($"<color=#9fd0ff><b>Spine</b> of a swarm with {limbs} linked squad{(limbs > 1 ? "s" : "")}</color>\n");
-                else if (w.Leader[e] >= 0)
-                    _sb.Append("<color=#9fd0ff><b>Limb</b> of a larger swarm — orders flow from its spine ([U] unlink)</color>\n");
+                if (w.Leader[e] >= 0)
+                    _sb.Append($"<color=#9fd0ff><b>Squad {w.SiblingOrdinal[e]} of Battalion {w.SiblingOrdinal[w.Leader[e]]}</b> — orders flow from its prime ([U] unlink)</color>\n");
+                else if (limbs > 0)
+                    _sb.Append($"<color=#9fd0ff><b>Battalion {w.SiblingOrdinal[e]}</b> — prime of {limbs + 1} squads (select via 1,{w.SiblingOrdinal[e]})</color>\n");
+                else
+                    _sb.Append($"<color=#9fd0ff><b>Battalion {w.SiblingOrdinal[e]}</b> (lone squad — select via 1,{w.SiblingOrdinal[e]})</color>\n");
             }
             else if (w.Leaderless[e])
                 _sb.Append("<color=#ff7766><b>LEADERLESS</b>  -25% move & attack, no squad bonus — seeking a leader</color>\n");
@@ -551,7 +554,7 @@ namespace Petri.Client
                     if (w.Kind[i] == EntityKind.Unit && w.Leader[i] == lead && !defs.Units[w.DefIndex[i]].IsLeader) totalUnits++;
             }
 
-            GUI.Label(new Rect(r.x, r.y, r.width - 50, 20), $"<b>Swarm Link</b>  {_treeLeaders.Count} squads · {totalUnits + _treeLeaders.Count} units", _label);
+            GUI.Label(new Rect(r.x, r.y, r.width - 50, 20), $"<b>Battalion {w.SiblingOrdinal[root]}</b>  {_treeLeaders.Count} squads · {totalUnits + _treeLeaders.Count} units", _label);
             if (GUI.Button(new Rect(r.x + r.width - 46, r.y, 44, 20), "All", _small)) input.SelectSwarm(root);
 
             // Map world positions into the plot area; keep a minimum span so tight clusters
