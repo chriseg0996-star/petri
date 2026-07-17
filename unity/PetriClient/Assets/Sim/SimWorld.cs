@@ -100,6 +100,10 @@ namespace Petri.Core
                                                 //   SetFacing) — don't auto-turn toward travel
         public readonly bool[] HasLimbStation;  // linked leader: player drew a custom station
         public readonly FixVec2[] LimbStation;  // linked leader: offset from prime (X=fwd, Y=side, prime frame)
+        public readonly byte[] SiblingOrdinal;  // leader: position among siblings, left-to-right.
+                                                //   Roots = battalion number 1..N per player; limbs =
+                                                //   squad number 2..N (the prime is implicitly squad 1).
+                                                //   0 = unassigned (members, or awaiting Pass 1d).
         public readonly bool[] AutoAssimilate;  // building: produced combat units join the nearest swarm
         public readonly int[] Generation;       // per-slot version, bumped each Spawn — (index,gen)
                                                 //   is a stable identity the UI uses for control groups
@@ -196,6 +200,7 @@ namespace Petri.Core
             FacingHeld = new bool[cap];
             HasLimbStation = new bool[cap];
             LimbStation = new FixVec2[cap];
+            SiblingOrdinal = new byte[cap];
             AutoAssimilate = new bool[cap];
             Generation = new int[cap];
             ScratchUnitCounts = new int[playerCount * unitDefCount];
@@ -279,6 +284,7 @@ namespace Petri.Core
                 FacingHeld[i] = false;
                 HasLimbStation[i] = false;
                 LimbStation[i] = FixVec2.Zero;
+                SiblingOrdinal[i] = 0;
                 AutoAssimilate[i] = true; // buildings default to feeding the nearest swarm
                 Generation[i]++; // new occupant of this slot — never reset, only advances
                 if (i >= HighWater) HighWater = i + 1;

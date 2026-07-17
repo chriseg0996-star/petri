@@ -19,7 +19,7 @@ namespace Petri.Client
         [Serializable] private class RulesDto
         {
             public int maxEntities, startingFood, startingWorkers, nodeRadiusCenti;
-            public int maxUnitsPerLeader, maxLeadersPerPlayer, swarmJoinRadiusCenti, regroupRadiusCenti, leaderlessPenaltyNum, leaderlessPenaltyDen;
+            public int maxUnitsPerLeader, maxLeadersPerPlayer, maxSquadsPerBattalion, swarmJoinRadiusCenti, regroupRadiusCenti, leaderlessPenaltyNum, leaderlessPenaltyDen;
             public int squadDamageBonusNum, squadDamageBonusDen, squadCohesionRadiusCenti, linkSpacingCenti, enemyAnchorRangeCenti;
             public int frontArcCosNum, frontArcCosDen, rearArcCosNum, rearArcCosDen;
             public int sideDamageNum, sideDamageDen, rearDamageNum, rearDamageDen;
@@ -132,6 +132,7 @@ namespace Petri.Client
             NodeRadiusCenti = d.nodeRadiusCenti > 0 ? d.nodeRadiusCenti : 60,
             MaxUnitsPerLeader = d.maxUnitsPerLeader > 0 ? d.maxUnitsPerLeader : 15,
             MaxLeadersPerPlayer = d.maxLeadersPerPlayer > 0 ? d.maxLeadersPerPlayer : 9,
+            MaxSquadsPerBattalion = d.maxSquadsPerBattalion > 0 ? d.maxSquadsPerBattalion : 9,
             SwarmJoinRadiusCenti = d.swarmJoinRadiusCenti > 0 ? d.swarmJoinRadiusCenti : 400,
             RegroupRadiusCenti = d.regroupRadiusCenti > 0 ? d.regroupRadiusCenti : 400,
             LeaderlessPenaltyNum = d.leaderlessPenaltyNum > 0 ? d.leaderlessPenaltyNum : 3,

@@ -118,9 +118,9 @@ namespace Petri.Core
             }
         }
 
-        /// <summary>Leaders are capped per player (Rules.MaxLeadersPerPlayer, matching the nine
-        /// control groups). counts[] already includes live units AND queued production, so a
-        /// leader mid-build blocks a tenth from being queued.</summary>
+        /// <summary>Leaders are capped per player (Rules.MaxLeadersPerPlayer — battalion and
+        /// squad leaders combined). counts[] already includes live units AND queued production,
+        /// so a leader mid-build blocks one past the cap from being queued.</summary>
         private static bool UnderLeaderCap(SimWorld w, DefDatabase defs, int[] counts, byte owner, int cand)
         {
             if (!defs.Units[cand].IsLeader) return true;

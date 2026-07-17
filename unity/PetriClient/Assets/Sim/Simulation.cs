@@ -153,6 +153,7 @@ namespace Petri.Core
                 Mix(w.NodeMineral[i] ? 1UL : 0UL);
                 Mix(w.CarryMineral[i] ? 1UL : 0UL);
                 Mix((ulong)w.Leader[i]);
+                Mix(w.SiblingOrdinal[i]);
                 Mix(w.Leaderless[i] ? 1UL : 0UL);
                 Mix(w.Settled[i] ? 1UL : 0UL);
                 Mix(w.SeekingSwarm[i] ? 1UL : 0UL);

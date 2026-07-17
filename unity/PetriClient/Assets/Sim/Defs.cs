@@ -32,7 +32,8 @@ namespace Petri.Core
         public int StartingWorkers = 6;
         public int NodeRadiusCenti = 60;
         public int MaxUnitsPerLeader = 15;
-        public int MaxLeadersPerPlayer = 9; // matches the nine control-group slots
+        public int MaxLeadersPerPlayer = 9;    // battalion + squad leaders combined
+        public int MaxSquadsPerBattalion = 9;  // prime + limbs; single digits address every squad
         public int SwarmJoinRadiusCenti = 400;
         // Settled members knocked farther than this off their slot wake up and regroup
         // (deliberately separate from the join radius, which can be map-wide).

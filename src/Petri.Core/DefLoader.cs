@@ -95,6 +95,7 @@ namespace Petri.Core
                 NodeRadiusCenti = GetInt(r, "nodeRadiusCenti", 60),
                 MaxUnitsPerLeader = GetInt(r, "maxUnitsPerLeader", 15),
                 MaxLeadersPerPlayer = GetInt(r, "maxLeadersPerPlayer", 9),
+                MaxSquadsPerBattalion = GetInt(r, "maxSquadsPerBattalion", 9),
                 SwarmJoinRadiusCenti = GetInt(r, "swarmJoinRadiusCenti", 400),
                 RegroupRadiusCenti = GetInt(r, "regroupRadiusCenti", 400),
                 LeaderlessPenaltyNum = GetInt(r, "leaderlessPenaltyNum", 3),
