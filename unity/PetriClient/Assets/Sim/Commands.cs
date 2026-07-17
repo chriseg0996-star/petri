@@ -32,6 +32,8 @@ namespace Petri.Core
         UpgradeCache = 20,       // A = supply cache: buy the next tier (2x stock/HP, 1/2 drain, armed)
         BuyUpgrade = 21,         // A = upgrade dense index: purchase a tech-path upgrade
         BuildProng = 22,         // A = headquarters entity, B = hub-built building dense index
+        SetSiblingOrdinal = 23,  // A = leader, B = target ordinal — swaps positions with the
+                                 //   sibling currently holding B (battalion or squad number)
     }
 
     /// <summary>
@@ -411,6 +413,36 @@ namespace Petri.Core
                     if (!IsOwnedUnit(w, c.A, c.Player) && !IsOwnedBuilding(w, c.A, c.Player)) { Reject(w); return; }
                     if (c.B < 0 || c.B > 100) { Reject(w); return; }
                     w.Dial[c.A] = (byte)c.B;
+                    return;
+                }
+                case CommandType.SetSiblingOrdinal:
+                {
+                    // Renumber a battalion or squad: the leader SWAPS positions with the
+                    // sibling currently holding the target ordinal. Swap-only keeps every
+                    // scope's ordinals contiguous (Pass 1d never has holes to repair).
+                    // Roots trade battalion numbers (1..N); limbs trade squad numbers
+                    // (2..N — slot 1 is the prime's own, never reassignable).
+                    if (!IsOwnedUnit(w, c.A, c.Player) || !defs.Units[w.DefIndex[c.A]].IsLeader) { Reject(w); return; }
+                    int prime = w.Leader[c.A];
+                    int min = prime < 0 ? 1 : 2;
+                    if (c.B < min || c.B > 255 || c.B == w.SiblingOrdinal[c.A]) { Reject(w); return; }
+                    for (int j = 0; j < w.HighWater; j++)
+                    {
+                        if (j == c.A || w.Kind[j] != EntityKind.Unit || !defs.Units[w.DefIndex[j]].IsLeader) continue;
+                        bool sibling = prime < 0
+                            ? w.Leader[j] < 0 && w.Owner[j] == w.Owner[c.A]
+                            : w.Leader[j] == prime;
+                        if (!sibling || w.SiblingOrdinal[j] != c.B) continue;
+                        w.SiblingOrdinal[j] = w.SiblingOrdinal[c.A];
+                        w.SiblingOrdinal[c.A] = (byte)c.B;
+                        // Wake both squads so the line reshuffles immediately.
+                        w.Settled[c.A] = false;
+                        w.Settled[j] = false;
+                        WakeSquad(w, c.A);
+                        WakeSquad(w, j);
+                        return;
+                    }
+                    Reject(w); // no sibling holds that ordinal
                     return;
                 }
                 default:
