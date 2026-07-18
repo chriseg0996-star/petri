@@ -40,6 +40,7 @@ namespace Petri.Client
         private float _lastClickTime = -10f;
         private int _lastClickDef = -1;
         private readonly List<int> _lineUnits = new List<int>();
+        private readonly List<int> _lineLeaders = new List<int>();
         private readonly List<Vector2> _rightPath = new List<Vector2>();  // screen-space drawn curve
         private readonly List<Vector2> _worldPath = new List<Vector2>();  // world-space, built on release
         private readonly List<float> _cum = new List<float>();            // cumulative arc-length
@@ -602,7 +603,8 @@ namespace Petri.Client
         /// of selected units forms up straddling it, following its curve. Line length sets
         /// the frontage (units per rank); a longer stroke flattens the block down to a
         /// minimum of two ranks, a shorter one deepens it. Melee holds the front ranks,
-        /// ranged stands behind, unarmed brings up the rear.
+        /// ranged stands behind, unarmed brings up the rear. Leaders stand ON the line
+        /// itself, spread evenly along it, so their auras cover the whole block.
         /// </summary>
         private void IssueFormationPath(SimWorld w)
         {
@@ -623,19 +625,25 @@ namespace Petri.Client
             float total = _cum[_cum.Count - 1];
             if (total < 0.1f) { IssueMoveOrders(w); return; }
 
-            // Movers: every selected own unit — classic per-unit control.
+            // Movers: every selected own unit. Leaders split off — they spread along the
+            // line itself instead of joining the rank fill.
             _lineUnits.Clear();
+            _lineLeaders.Clear();
             foreach (int e in Selected)
-                if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == MatchBootstrap.HumanPlayer) _lineUnits.Add(e);
-            if (_lineUnits.Count == 0) return;
+            {
+                if (w.Kind[e] != EntityKind.Unit || w.Owner[e] != MatchBootstrap.HumanPlayer) continue;
+                if (_match.Defs.Units[w.DefIndex[e]].IsLeader) _lineLeaders.Add(e);
+                else _lineUnits.Add(e);
+            }
             int n = _lineUnits.Count;
+            if (n + _lineLeaders.Count == 0) return;
 
-            if (n == 1)
+            if (n + _lineLeaders.Count == 1)
             {
                 Vector2 solo = SampleAt(total * 0.5f, out _);
                 _match.Enqueue(new Command
                 {
-                    Type = CommandType.Move, A = _lineUnits[0],
+                    Type = CommandType.Move, A = n == 1 ? _lineUnits[0] : _lineLeaders[0],
                     B = Mathf.RoundToInt(solo.x * 100f), C = Mathf.RoundToInt(solo.y * 100f),
                 });
                 _match.View.Ping(new Vector3(solo.x, solo.y, 0f), GameView.MovePing);
@@ -646,7 +654,31 @@ namespace Petri.Client
             // from the group — the side the army is advancing toward.
             Vector2 centroid = Vector2.zero;
             foreach (int e in _lineUnits) centroid += UnitPos(w, e);
-            centroid /= n;
+            foreach (int e in _lineLeaders) centroid += UnitPos(w, e);
+            centroid /= n + _lineLeaders.Count;
+
+            // Leaders take the line itself: spread evenly by arc-length (midpoint slots),
+            // handed out in arc order so they don't cross, blanketing the block in auras.
+            if (_lineLeaders.Count > 0)
+            {
+                _lineLeaders.Sort((a, b) =>
+                {
+                    float sa = NearestArcLength(UnitPos(w, a)), sb = NearestArcLength(UnitPos(w, b));
+                    return sa != sb ? sa.CompareTo(sb) : a.CompareTo(b);
+                });
+                int L = _lineLeaders.Count;
+                for (int j = 0; j < L; j++)
+                {
+                    Vector2 pos = SampleAt(total * (2 * j + 1) / (2f * L), out _);
+                    _match.Enqueue(new Command
+                    {
+                        Type = CommandType.Move, A = _lineLeaders[j],
+                        B = Mathf.RoundToInt(pos.x * 100f), C = Mathf.RoundToInt(pos.y * 100f),
+                    });
+                    _match.View.Ping(new Vector3(pos.x, pos.y, 0f), GameView.MovePing);
+                }
+            }
+            if (n == 0) return; // leaders only: the line placement above is the whole order
             Vector2 chord = _worldPath[_worldPath.Count - 1] - _worldPath[0];
             Vector2 refFront = new Vector2(-chord.y, chord.x);
             if (refFront.sqrMagnitude < 1e-6f) refFront = Vector2.up;

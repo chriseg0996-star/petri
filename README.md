@@ -31,7 +31,8 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
    (dbl-click = all of type, **Space** = all military) · **R-click** move/rally/attack
    (multi-unit moves land in a spread grid centered on the click) · **R-drag** formation
    line (a rank block centered on the drawn curve — line length sets the frontage, down to
-   two ranks; melee front, ranged rear) · **Shift+R-drag** set facing · **[A]** attack-move ·
+   two ranks; melee front, ranged rear, leaders spread evenly along the line itself) ·
+   **Shift+R-drag** set facing · **[A]** attack-move ·
    **Ctrl+[1-9]/[1-9]** control groups · **[B]** build · **[S]** stop ·
    **arrows** or **middle-drag** pan · **scroll** zoom.
 
