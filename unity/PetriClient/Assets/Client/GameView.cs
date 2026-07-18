@@ -113,6 +113,32 @@ namespace Petri.Client
         {
             _match = match;
             BuildSpriteAtlas();
+
+            // Terrain walls never move: one persistent renderer each (dark body + a faint
+            // rim so the edge reads), under every entity. Fog blankets them like the rest.
+            var world = match.Sim.World;
+            for (int k = 0; k < world.WallPos.Length; k++)
+            {
+                float d = world.WallRadius[k].Raw / (float)Fix.OneRaw * 2f;
+                var pos = new Vector3(world.WallPos[k].X.Raw / (float)Fix.OneRaw,
+                                      world.WallPos[k].Y.Raw / (float)Fix.OneRaw, 0f);
+                var go = new GameObject("wall" + k);
+                go.transform.SetParent(transform);
+                go.transform.position = pos;
+                go.transform.localScale = new Vector3(d, d, 1f);
+                var body = go.AddComponent<SpriteRenderer>();
+                body.sprite = _disc;
+                body.color = new Color(0.20f, 0.23f, 0.20f, 1f);
+                body.sortingOrder = 0;
+                var rimGo = new GameObject("wallrim" + k);
+                rimGo.transform.SetParent(transform);
+                rimGo.transform.position = pos;
+                rimGo.transform.localScale = new Vector3(d, d, 1f);
+                var rim = rimGo.AddComponent<SpriteRenderer>();
+                rim.sprite = _ring;
+                rim.color = new Color(0.34f, 0.38f, 0.33f, 0.9f);
+                rim.sortingOrder = 1;
+            }
             if (MatchBootstrap.PendingFog)
             {
                 Vision = new VisionMap();

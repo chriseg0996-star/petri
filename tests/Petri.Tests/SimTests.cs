@@ -1627,6 +1627,59 @@ namespace Petri.Tests
         }
     }
 
+    /// <summary>Immovable terrain walls: map-defined circles that units cannot cross and
+    /// buildings cannot stand on — chokepoints without a pathfinder.</summary>
+    public class TerrainTests
+    {
+        private const short SoldierDef = 1; // TinyDefs sorted ids: test.leader, test.soldier, test.worker
+
+        [Fact]
+        public void WallsAreImpassableToUnits()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            w.WallPos = new[] { new FixVec2(Fix.FromInt(20), Fix.FromInt(20)) };
+            w.WallRadius = new[] { Fix.FromInt(3) };
+            int s = w.Spawn(EntityKind.Unit, SoldierDef, 0, new FixVec2(Fix.FromInt(12), Fix.FromInt(20)), 60);
+
+            // Order the soldier straight through the wall's center.
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.Move, A = s, B = 3000, C = 2000 });
+            Fix wallR = w.WallRadius[0];
+            for (int t = 0; t < 300; t++)
+            {
+                sim.Tick();
+                Fix dSq = (w.Pos[s] - w.WallPos[0]).LengthSq;
+                Assert.True(dSq >= wallR * wallR, $"unit inside the wall at tick {t}");
+                Assert.True(w.Pos[s].X < Fix.FromInt(20), "unit teleported through the wall");
+            }
+        }
+
+        [Fact]
+        public void BuildingsRefuseToStandOnWalls()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            w.WallPos = new[] { new FixVec2(Fix.FromInt(20), Fix.FromInt(20)) };
+            w.WallRadius = new[] { Fix.FromInt(3) };
+            int worker = DeterminismTests.FindUnit(sim, 0, isWorker: true);
+
+            int rejectedBefore = w.RejectedCommands;
+            CommandSystem.Apply(w, sim.Defs, new Command
+            {
+                Tick = 0, Player = 0, Type = CommandType.ConstructBuilding,
+                A = worker, B = 2000, C = 2000, D = sim.Defs.BuildingIndex("test.nursery"),
+            });
+            Assert.Equal(rejectedBefore + 1, w.RejectedCommands); // footprint on the wall
+
+            CommandSystem.Apply(w, sim.Defs, new Command
+            {
+                Tick = 0, Player = 0, Type = CommandType.ConstructBuilding,
+                A = worker, B = 3200, C = 2000, D = sim.Defs.BuildingIndex("test.nursery"),
+            });
+            Assert.Equal(rejectedBefore + 1, w.RejectedCommands); // clear of it: accepted
+        }
+    }
+
     /// <summary>Validates the shipped JSON dataset actually loads and is internally consistent.</summary>
     public class DataTests
     {
@@ -1653,6 +1706,7 @@ namespace Petri.Tests
 
             var map = DefLoader.LoadMap(dataDir, "petri-dish");
             Assert.True(map.Spawns.Length >= 2);
+            Assert.True(map.Walls.Length > 0); // shipped maps carry terrain walls
 
             var sim = new Simulation(defs, map, 2, 42, new CommandLog());
             for (int t = 0; t < 300; t++) sim.Tick();

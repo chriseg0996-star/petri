@@ -59,6 +59,11 @@ runtime, so authored C&C-style art drops in later by swapping them per def id.
 - Worker economy: gather from nodes, haul to headquarters.
 - Movement, hard-body collision with push-resistance-weighted separation, auto-engage combat,
   HQ-death elimination.
+- **Terrain walls**: maps carry immovable circular walls (`"walls": [{x, y, r}]`) that shape
+  chokepoints and flanking routes — units slide around them, buildings refuse to stand on
+  them. Static map data (never sim state, hashed via DefsHash); all three shipped maps have
+  symmetric layouts. Every unit and building type wears a distinct runtime-generated 2D
+  silhouette; double-click selects all of a type (units and buildings alike).
 - **Classic per-unit control**: every unit obeys direct Move / AttackMove / Stop /
   SetFacing — no control layer between the player and their units. Multi-unit right-clicks
   spread into a compact grid centered on the click; right-drag lays the selection along a

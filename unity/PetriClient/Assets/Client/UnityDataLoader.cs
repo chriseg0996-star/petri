@@ -63,12 +63,14 @@ namespace Petri.Client
 
         [Serializable] private class SpawnDto { public int x, y; }
         [Serializable] private class NodeDto { public int x, y, food; public string resource; }
+        [Serializable] private class WallDto { public int x, y, r; }
         [Serializable] private class MapDto
         {
             public string name;
             public int widthCenti, heightCenti;
             public SpawnDto[] spawns;
             public NodeDto[] nodes;
+            public WallDto[] walls;
         }
 #pragma warning restore 0649
 
@@ -109,6 +111,11 @@ namespace Petri.Client
                 XCenti = dto.nodes[i].x, YCenti = dto.nodes[i].y, Food = dto.nodes[i].food,
                 Mineral = dto.nodes[i].resource == "minerals",
             };
+            var walls = new MapWall[dto.walls != null ? dto.walls.Length : 0];
+            for (int i = 0; i < walls.Length; i++) walls[i] = new MapWall
+            {
+                XCenti = dto.walls[i].x, YCenti = dto.walls[i].y, RadiusCenti = dto.walls[i].r,
+            };
             return new MapDef
             {
                 Name = string.IsNullOrEmpty(dto.name) ? mapName : dto.name,
@@ -116,6 +123,7 @@ namespace Petri.Client
                 HeightCenti = dto.heightCenti,
                 Spawns = spawns,
                 Nodes = nodes,
+                Walls = walls,
             };
         }
 

@@ -206,6 +206,23 @@ namespace Petri.Client
                         }
                 }
 
+                // Terrain walls: static geometry, always drawn (like the terrain shading).
+                var wallCol = new Color32(74, 82, 72, 255);
+                for (int k = 0; k < w.WallPos.Length; k++)
+                {
+                    int wx = (int)(w.WallPos[k].X.Raw / (float)Fix.OneRaw);
+                    int wy = (int)(w.WallPos[k].Y.Raw / (float)Fix.OneRaw);
+                    int wr = Mathf.Max(1, (int)(w.WallRadius[k].Raw / (float)Fix.OneRaw));
+                    for (int dy = -wr; dy <= wr; dy++)
+                        for (int dx = -wr; dx <= wr; dx++)
+                        {
+                            if (dx * dx + dy * dy > wr * wr) continue;
+                            int qx = wx + dx, qy = wy + dy;
+                            if (qx < 0 || qx >= cw || qy < 0 || qy >= ch) continue;
+                            _miniPixels[qy * cw + qx] = wallCol;
+                        }
+                }
+
                 for (int i = 0; i < w.HighWater; i++)
                 {
                     if (w.Kind[i] == EntityKind.None) continue;

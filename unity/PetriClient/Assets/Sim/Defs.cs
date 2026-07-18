@@ -166,6 +166,9 @@ namespace Petri.Core
 
     public sealed class MapSpawn { public int XCenti; public int YCenti; }
     public sealed class MapNode { public int XCenti; public int YCenti; public int Food; public bool Mineral; }
+    /// <summary>Immovable circular terrain: walls/rocks that shape chokepoints and flanking
+    /// routes. Static map data (hashed via DefsHash with the map file), never sim state.</summary>
+    public sealed class MapWall { public int XCenti; public int YCenti; public int RadiusCenti; }
 
     public sealed class MapDef
     {
@@ -174,6 +177,7 @@ namespace Petri.Core
         public int HeightCenti;
         public MapSpawn[] Spawns = Array.Empty<MapSpawn>();
         public MapNode[] Nodes = Array.Empty<MapNode>();
+        public MapWall[] Walls = Array.Empty<MapWall>();
     }
 
     /// <summary>

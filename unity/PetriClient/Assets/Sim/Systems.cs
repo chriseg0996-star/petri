@@ -613,6 +613,25 @@ namespace Petri.Core
                     else if (mobileI) w.Pos[i] = w.ClampToMap(w.Pos[i] - dir * overlap);
                     else w.Pos[j] = w.ClampToMap(w.Pos[j] + dir * overlap);
                 }
+
+                // Terrain walls are absolutely immovable: any overlapping unit takes the
+                // whole separation. Straight-line movers slide along the arc, so walls
+                // shape chokepoints and flanking routes without a pathfinder.
+                if (mobileI)
+                {
+                    for (int k = 0; k < w.WallPos.Length; k++)
+                    {
+                        Fix rSum = ri + w.WallRadius[k];
+                        FixVec2 d = w.Pos[i] - w.WallPos[k];
+                        Fix distSq = d.LengthSq;
+                        if (distSq >= rSum * rSum) continue;
+                        Fix dist = Fix.Sqrt(distSq);
+                        FixVec2 dir = dist.Raw == 0
+                            ? SimWorld.RingDir(i + k) // dead center: deterministic exit axis
+                            : new FixVec2(d.X / dist, d.Y / dist);
+                        w.Pos[i] = w.ClampToMap(w.WallPos[k] + dir * rSum);
+                    }
+                }
             }
         }
 

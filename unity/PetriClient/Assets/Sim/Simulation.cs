@@ -183,6 +183,15 @@ namespace Petri.Core
             w.MaxInteractRadius = Fix.Ratio(maxCenti + 10, 100);
             Fix centerX = w.MapWidth * Fix.Ratio(1, 2);
 
+            // Immovable terrain straight from the map: chokepoints and flanking routes.
+            w.WallPos = new FixVec2[map.Walls.Length];
+            w.WallRadius = new Fix[map.Walls.Length];
+            for (int k = 0; k < map.Walls.Length; k++)
+            {
+                w.WallPos[k] = w.ClampToMap(new FixVec2(Fix.Ratio(map.Walls[k].XCenti, 100), Fix.Ratio(map.Walls[k].YCenti, 100)));
+                w.WallRadius[k] = Fix.Ratio(map.Walls[k].RadiusCenti, 100);
+            }
+
             for (byte p = 0; p < playerCount; p++)
             {
                 var player = w.Players[p];

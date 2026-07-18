@@ -49,6 +49,10 @@ namespace Petri.Core
                     XCenti = GetInt(n, "x"), YCenti = GetInt(n, "y"), Food = GetInt(n, "food"),
                     Mineral = GetString(n, "resource", "food") == "minerals",
                 });
+            var walls = new List<MapWall>();
+            if (root.TryGetProperty("walls", out var wallArr))
+                foreach (var v in wallArr.EnumerateArray())
+                    walls.Add(new MapWall { XCenti = GetInt(v, "x"), YCenti = GetInt(v, "y"), RadiusCenti = GetInt(v, "r") });
             return new MapDef
             {
                 Name = GetString(root, "name", name),
@@ -56,6 +60,7 @@ namespace Petri.Core
                 HeightCenti = GetInt(root, "heightCenti"),
                 Spawns = spawns.ToArray(),
                 Nodes = nodes.ToArray(),
+                Walls = walls.ToArray(),
             };
         }
 

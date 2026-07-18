@@ -350,7 +350,8 @@ namespace Petri.Core
             }
         }
 
-        /// <summary>A building footprint at pos clears every building and resource node by gap.</summary>
+        /// <summary>A building footprint at pos clears every building, resource node, and
+        /// terrain wall by gap.</summary>
         private static bool FootprintClear(SimWorld w, DefDatabase defs, FixVec2 pos, Fix newR, Fix gap)
         {
             for (int i = 0; i < w.HighWater; i++)
@@ -361,6 +362,11 @@ namespace Petri.Core
                     : Fix.Ratio(w.Rules.NodeRadiusCenti, 100);
                 Fix minD = newR + otherR + gap;
                 if ((w.Pos[i] - pos).LengthSq < minD * minD) return false;
+            }
+            for (int k = 0; k < w.WallPos.Length; k++)
+            {
+                Fix minD = newR + w.WallRadius[k] + gap;
+                if ((w.WallPos[k] - pos).LengthSq < minD * minD) return false;
             }
             return true;
         }

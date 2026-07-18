@@ -121,6 +121,13 @@ namespace Petri.Core
         public readonly int[] ScratchQueue;     // BFS queue for SupplySystem; leader list for LeaderAuraSystem
         public readonly bool[] ScratchLeaderAura; // unit: inside a friendly leader's aura this tick
 
+        // Immovable terrain from the map (walls/rocks). Static for the whole match and
+        // identical on every peer (map data, covered by DefsHash) — deliberately NOT hashed
+        // and never mutated. Units are pushed out by CollisionSystem; buildings refuse to
+        // stand on them.
+        public FixVec2[] WallPos = System.Array.Empty<FixVec2>();
+        public Fix[] WallRadius = System.Array.Empty<Fix>();
+
         public int Capacity => Kind.Length;
 
         public SimWorld(Rules rules, int playerCount, int unitDefCount, int upgradeCount, Fix mapWidth, Fix mapHeight, ulong seed)

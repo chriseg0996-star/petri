@@ -307,6 +307,11 @@ namespace Petri.Core
                 Fix minD = newR + otherR + gap;
                 if ((w.Pos[i] - pos).LengthSq < minD * minD) return false;
             }
+            for (int k = 0; k < w.WallPos.Length; k++)
+            {
+                Fix minD = newR + w.WallRadius[k] + gap;
+                if ((w.WallPos[k] - pos).LengthSq < minD * minD) return false;
+            }
             return true;
         }
 
