@@ -31,13 +31,34 @@ namespace Petri.Tests
                     PushStrength = 1, PushResistance = 1, FoodCost = 40, BuildTimeTicks = 80,
                     IsWorker = true, CarryCapacity = 10, GatherTicks = 30,
                 },
+                // Free chaff (FoodCost 0) — MUST sort after test.worker so the hardcoded
+                // unit dense indices 0/1/2 above stay valid.
+                new UnitDef
+                {
+                    Id = "test.xmite", MaxHp = 40, MoveSpeedCenti = 240, CollisionRadiusCenti = 18,
+                    PushStrength = 1, PushResistance = 1, AttackDamage = 3, AttackRangeCenti = 40,
+                    AcquireRangeCenti = 700, AttackCooldownTicks = 20, FoodCost = 0, BuildTimeTicks = 50,
+                },
             };
             var buildings = new[]
             {
+                // Sorts FIRST (like the real strain.brood-sac) so the bot test genuinely
+                // guards against the free-spawner hijacking PickConstructible.
+                new BuildingDef
+                {
+                    Id = "test.broodsac", MaxHp = 200, CollisionRadiusCenti = 50,
+                    Constructible = true, FoodCost = 50, BuildTimeTicks = 40,
+                    Produces = new[] { "test.xmite" },
+                },
                 new BuildingDef
                 {
                     Id = "test.cache", MaxHp = 200, CollisionRadiusCenti = 60,
                     ProvidesSupply = true, StockCapacity = 50, Constructible = true, FoodCost = 40, BuildTimeTicks = 40,
+                },
+                new BuildingDef
+                {
+                    Id = "test.dropoff", MaxHp = 300, CollisionRadiusCenti = 60,
+                    IsDropoff = true, Constructible = true, FoodCost = 40, BuildTimeTicks = 40,
                 },
                 new BuildingDef
                 {
@@ -61,6 +82,12 @@ namespace Petri.Tests
                 {
                     Id = "test.mutagen", MaxHp = 200, CollisionRadiusCenti = 40,
                     Constructible = true, EvoCost = 3, BuildTimeTicks = 40, AttackBonus = 1,
+                },
+                new BuildingDef
+                {
+                    Id = "test.turret", MaxHp = 300, CollisionRadiusCenti = 50,
+                    Constructible = true, FoodCost = 60, BuildTimeTicks = 40,
+                    AttackDamage = 7, AttackRangeCenti = 500, AttackCooldownTicks = 10, ProjectileSpeedCenti = 1400,
                 },
             };
             // Test upgrades gated behind test.nursery, all scaling test.soldier — one per fold
@@ -781,6 +808,44 @@ namespace Petri.Tests
             Assert.Equal(a.Attacks, b.Attacks);
             Assert.True(a.Attacks > 0, "bot never launched an attack wave");
             Assert.True(a.Commands > 0, "bot issued no commands at all");
+        }
+
+        [Fact]
+        public void BotNeverPicksTheFreeSpawnerAsItsMilitaryBuilding()
+        {
+            // test.broodsac sorts FIRST among buildings and produces a (free) combat unit —
+            // without the paid-produce rule the bot would pick chaff sacs as its military
+            // expansion. Keep the bot rich so its expansion branch actually fires.
+            var log = new CommandLog();
+            var sim = TestWorlds.NewSim(7, log);
+            var bots = new[] { new BotController(0, 7), new BotController(1, 7) };
+            var buffer = new System.Collections.Generic.List<Command>();
+            int broodsac = sim.Defs.BuildingIndex("test.broodsac");
+            int nursery = sim.Defs.BuildingIndex("test.nursery");
+            int constructs = 0;
+            for (int t = 0; t < 1200; t++)
+            {
+                sim.World.Players[0].Food = 5000; // rich: the "second military building" path opens
+                sim.World.Players[1].Food = 5000;
+                buffer.Clear();
+                bots[0].Think(sim.World, sim.Defs, buffer);
+                bots[1].Think(sim.World, sim.Defs, buffer);
+                for (int k = 0; k < buffer.Count; k++)
+                {
+                    var c = buffer[k];
+                    c.Tick = sim.TickCount;
+                    log.Add(c);
+                    if (c.Type == CommandType.ConstructBuilding)
+                    {
+                        constructs++;
+                        Assert.NotEqual(broodsac, c.D); // free spawners are never the army pick
+                        Assert.Equal(nursery, c.D);     // the real producer is
+                    }
+                }
+                sim.Tick();
+                if (sim.AlivePlayers() <= 1) break;
+            }
+            Assert.True(constructs > 0, "bot never tried to expand at all");
         }
 
         private struct BotRun { public ulong Hash; public int Attacks; public int Commands; }
@@ -1624,6 +1689,113 @@ namespace Petri.Tests
             Assert.True(soldier >= 0, "expected a soldier within 300 ticks");
             Assert.True(w.HasMoveOrder[soldier], "fresh unit walks to the rally point");
             Assert.Equal(w.RallyPoint[hq], w.MoveTarget[soldier]);
+        }
+    }
+
+    /// <summary>Def-driven building weapons (spike-battery style): a finished building with
+    /// AttackDamage in its def shoots on its own stats; tiered caches keep the rules stats.</summary>
+    public class ArmedBuildingTests
+    {
+        private static SimWorld NewWorld(DefDatabase defs, int players = 2) =>
+            new SimWorld(defs.Rules, players, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
+
+        [Fact]
+        public void ArmedBuildingShootsOnlyOnceFinished()
+        {
+            var defs = TestWorlds.TinyDefs();
+            var w = NewWorld(defs);
+            int turret = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.turret"), 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(10)), 300);
+            w.ConstructionRemaining[turret] = 30;
+            int enemy = w.Spawn(EntityKind.Unit, 1, 1, new FixVec2(Fix.FromInt(13), Fix.FromInt(10)), 60);
+
+            CombatSystem.Tick(w, defs);
+            Assert.Equal(60, w.Hp[enemy]); // a construction site is silent
+
+            w.ConstructionRemaining[turret] = 0;
+            CombatSystem.Tick(w, defs);
+            Assert.Equal(60 - 7, w.Hp[enemy]); // def-driven damage, not the cache rules
+            Assert.Equal(10, w.AttackCooldown[turret]); // def-driven cooldown
+            Assert.Contains(w.AttackEvents, ev => ev.Attacker == turret && ev.Target == enemy);
+        }
+
+        [Fact]
+        public void ArmedBuildingRespectsItsRange()
+        {
+            var defs = TestWorlds.TinyDefs();
+            var w = NewWorld(defs);
+            int turret = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.turret"), 0, new FixVec2(Fix.FromInt(10), Fix.FromInt(10)), 300);
+            int enemy = w.Spawn(EntityKind.Unit, 1, 1, new FixVec2(Fix.FromInt(20), Fix.FromInt(10)), 60);
+
+            for (int t = 0; t < 30; t++) CombatSystem.Tick(w, defs);
+            Assert.Equal(60, w.Hp[enemy]); // 10u away >> 5u reach: never hit
+        }
+    }
+
+    /// <summary>Expansion drop-offs (isDropoff): workers bank resources at them like at
+    /// the HQ, but they are not supply depots.</summary>
+    public class DropoffTests
+    {
+        private static SimWorld NewWorld(DefDatabase defs) =>
+            new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(60), Fix.FromInt(60), 1);
+
+        [Fact]
+        public void DropoffBuildingAcceptsWorkerDeposits()
+        {
+            var defs = TestWorlds.TinyDefs();
+            var w = NewWorld(defs);
+            int workerDef = defs.UnitIndex("test.worker");
+            w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.hq"), 0, new FixVec2(Fix.FromInt(5), Fix.FromInt(5)), 500); // far corner
+            int drop = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.dropoff"), 0, new FixVec2(Fix.FromInt(45), Fix.FromInt(45)), 300);
+            int worker = w.Spawn(EntityKind.Unit, (short)workerDef, 0, new FixVec2(Fix.FromInt(45), Fix.FromInt(45)), 30);
+            w.Carry[worker] = defs.Units[workerDef].CarryCapacity;
+            long before = w.Players[0].Food;
+
+            WorkerSystem.Tick(w, defs);
+
+            Assert.Equal(0, w.Carry[worker]); // deposited at the expansion, not across the map
+            Assert.Equal(before + defs.Units[workerDef].CarryCapacity, w.Players[0].Food);
+            Assert.Equal(0, w.DepotStock[drop]); // not a supply depot: nothing is stocked
+        }
+
+        [Fact]
+        public void UnfinishedDropoffDoesNotAcceptDeposits()
+        {
+            var defs = TestWorlds.TinyDefs();
+            var w = NewWorld(defs);
+            int workerDef = defs.UnitIndex("test.worker");
+            w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.hq"), 0, new FixVec2(Fix.FromInt(5), Fix.FromInt(5)), 500);
+            int drop = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.dropoff"), 0, new FixVec2(Fix.FromInt(45), Fix.FromInt(45)), 300);
+            w.ConstructionRemaining[drop] = 30; // still a site
+            int worker = w.Spawn(EntityKind.Unit, (short)workerDef, 0, new FixVec2(Fix.FromInt(45), Fix.FromInt(45)), 30);
+            w.Carry[worker] = defs.Units[workerDef].CarryCapacity;
+
+            WorkerSystem.Tick(w, defs);
+
+            Assert.Equal(defs.Units[workerDef].CarryCapacity, w.Carry[worker]); // still hauling to the far HQ
+        }
+    }
+
+    /// <summary>Zero-food units trickle from their producer without touching the bank —
+    /// the brood-sac mechanism, running on the unmodified production system.</summary>
+    public class FreeSpawnerTests
+    {
+        [Fact]
+        public void FreeUnitsTrickleWithoutDrainingFood()
+        {
+            var defs = TestWorlds.TinyDefs();
+            var w = new SimWorld(defs.Rules, 1, defs.Units.Length, defs.Upgrades.Length, Fix.FromInt(40), Fix.FromInt(40), 1);
+            int sac = w.Spawn(EntityKind.Building, (short)defs.BuildingIndex("test.broodsac"), 0, new FixVec2(Fix.FromInt(20), Fix.FromInt(20)), 200);
+            int mite = defs.UnitIndex("test.xmite");
+            w.Players[0].ProductionWeights[mite] = 1; // standalone worlds start all-zero weights
+            w.Players[0].Food = 0; // an empty bank still affords free units
+
+            for (int t = 0; t < 105; t++) ProductionSystem.Tick(w, defs);
+
+            int mites = 0;
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Unit && w.DefIndex[i] == mite) mites++;
+            Assert.Equal(2, mites); // one per BuildTimeTicks(50) cycle
+            Assert.Equal(0, w.Players[0].Food);
         }
     }
 

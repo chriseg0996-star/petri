@@ -317,8 +317,13 @@ namespace Petri.Core
 
         private static bool ProducesCombat(DefDatabase defs, BuildingDef bd)
         {
+            // A military building must produce a PAID combat unit: free-mite spawners
+            // (FoodCost 0) don't count, or the bot would build chaff sacs as its army.
             for (int k = 0; k < bd.ProducesDense.Length; k++)
-                if (!defs.Units[bd.ProducesDense[k]].IsWorker) return true;
+            {
+                var ud = defs.Units[bd.ProducesDense[k]];
+                if (!ud.IsWorker && ud.FoodCost > 0) return true;
+            }
             return false;
         }
 

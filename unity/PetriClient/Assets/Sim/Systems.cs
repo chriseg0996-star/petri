@@ -153,7 +153,10 @@ namespace Petri.Core
                     case EntityKind.Building:
                         if (w.ConstructionRemaining[i] > 0) break;
                         var bd = defs.Buildings[w.DefIndex[i]];
-                        if (bd.IsHeadquarters || bd.HubBuilt) w.ScratchDropoffs[w.ScratchDropoffCount++] = i;
+                        // Drop-offs: HQs, hub prongs, and dedicated expansion drop-offs.
+                        // Forward drop-offs also become caravan LOAD points (the treasury
+                        // is global, so loading anywhere is equivalent) — intentional.
+                        if (bd.IsHeadquarters || bd.HubBuilt || bd.IsDropoff) w.ScratchDropoffs[w.ScratchDropoffCount++] = i;
                         if (bd.ProvidesSupply && !bd.IsHeadquarters) w.ScratchCaches[w.ScratchCacheCount++] = i;
                         break;
                 }
@@ -845,19 +848,24 @@ namespace Petri.Core
                 }
             }
 
-            // ---- TIERED CACHE DEFENSE: an upgraded supply cache (Tier >= 1) fires a ranged
-            // shot at the nearest enemy in range. Static defense with flat rules-driven damage
-            // — no arcs, aura bonuses, or supply modifiers.
-            Fix cacheRange = Fix.Ratio(w.Rules.CacheAttackRangeCenti, 100);
+            // ---- STATIC DEFENSE: a finished building fires a ranged shot if it was upgraded
+            // to Tier >= 1 (flat rules-driven cache stats, exactly as before) OR its def
+            // carries its own AttackDamage (spike-battery style, def-driven stats; def stats
+            // win if both apply). No arcs, aura bonuses, or supply modifiers.
             for (int i = 0; i < w.HighWater; i++)
             {
-                if (w.Kind[i] != EntityKind.Building || w.Tier[i] == 0 || w.ConstructionRemaining[i] > 0) continue;
+                if (w.Kind[i] != EntityKind.Building || w.ConstructionRemaining[i] > 0) continue;
+                var bdef = defs.Buildings[w.DefIndex[i]];
+                bool defArmed = bdef.AttackDamage > 0;
+                if (!defArmed && w.Tier[i] == 0) continue;
                 if (w.AttackCooldown[i] > 0) { w.AttackCooldown[i]--; continue; }
 
-                Fix selfR = Fix.Ratio(defs.Buildings[w.DefIndex[i]].CollisionRadiusCenti, 100);
+                int dmg = defArmed ? bdef.AttackDamage : w.Rules.CacheAttackDamage;
+                Fix range = Fix.Ratio(defArmed ? bdef.AttackRangeCenti : w.Rules.CacheAttackRangeCenti, 100);
+                Fix selfR = Fix.Ratio(bdef.CollisionRadiusCenti, 100);
                 int target = -1;
                 Fix bestSq = Fix.Zero;
-                Fix reach0 = cacheRange + selfR + w.MaxInteractRadius;
+                Fix reach0 = range + selfR + w.MaxInteractRadius;
                 int cx0 = w.GridClampX((int)((w.Pos[i].X - reach0).Raw >> SimWorld.GridShift));
                 int cx1 = w.GridClampX((int)((w.Pos[i].X + reach0).Raw >> SimWorld.GridShift));
                 int cy0 = w.GridClampY((int)((w.Pos[i].Y - reach0).Raw >> SimWorld.GridShift));
@@ -868,14 +876,14 @@ namespace Petri.Core
                 {
                     if (!w.AreEnemies(w.Owner[i], w.Owner[j])) continue;
                     if (w.Kind[j] != EntityKind.Unit && w.Kind[j] != EntityKind.Building) continue;
-                    Fix maxD = cacheRange + selfR + CollisionSystem.RadiusOf(w, defs, j);
+                    Fix maxD = range + selfR + CollisionSystem.RadiusOf(w, defs, j);
                     Fix dsq = (w.Pos[j] - w.Pos[i]).LengthSq;
                     if (dsq > maxD * maxD) continue;
                     if (target < 0 || dsq < bestSq || (dsq == bestSq && j < target)) { target = j; bestSq = dsq; }
                 }
                 if (target < 0) continue;
-                Hit(w, defs, i, target, w.Rules.CacheAttackDamage); // an armed cache earns bounty too
-                w.AttackCooldown[i] = w.Rules.CacheAttackCooldownTicks;
+                Hit(w, defs, i, target, dmg); // armed structures earn bounty too
+                w.AttackCooldown[i] = defArmed ? bdef.AttackCooldownTicks : w.Rules.CacheAttackCooldownTicks;
                 w.AttackEvents.Add(new AttackEvent { Attacker = i, Target = target });
             }
         }

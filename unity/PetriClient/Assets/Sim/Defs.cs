@@ -118,6 +118,11 @@ namespace Petri.Core
         public int CollisionRadiusCenti;
         public bool IsHeadquarters;   // resource drop-off + defeat condition + supply chain root
         public bool ProvidesSupply;   // projects supply and relays the chain (when connected)
+        public bool IsDropoff;        // workers may deposit resources here (expansion drop-off)
+        public int AttackDamage;      // >0 = the FINISHED building fires its own ranged shot
+        public int AttackRangeCenti;
+        public int AttackCooldownTicks;
+        public int ProjectileSpeedCenti; // visual-only: client shot-dot speed
         public int AttackBonus;       // while this stands FINISHED, every unit its owner fields
                                       //   hits this much harder — stacks across copies, and is
                                       //   lost the moment the structure falls

@@ -47,8 +47,9 @@ namespace Petri.Client
             public string id;
             public string description;
             public int maxHp, collisionRadiusCenti, foodCost, mineralCost, evoCost, buildTimeTicks;
-            public bool isHeadquarters, providesSupply, startsBuilt, constructible, hubBuilt;
+            public bool isHeadquarters, providesSupply, startsBuilt, constructible, hubBuilt, isDropoff;
             public int attackBonus;
+            public int attackDamage, attackRangeCenti, attackCooldownTicks, projectileSpeedCenti;
             public int stockCapacity;
             public string[] produces;
         }
@@ -181,7 +182,10 @@ namespace Petri.Client
         private static BuildingDef ToBuilding(BuildingDto d) => new BuildingDef
         {
             Id = d.id, Description = d.description ?? "", MaxHp = d.maxHp, CollisionRadiusCenti = d.collisionRadiusCenti,
-            IsHeadquarters = d.isHeadquarters, ProvidesSupply = d.providesSupply, AttackBonus = d.attackBonus, StockCapacity = d.stockCapacity, StartsBuilt = d.startsBuilt,
+            IsHeadquarters = d.isHeadquarters, ProvidesSupply = d.providesSupply, IsDropoff = d.isDropoff,
+            AttackDamage = d.attackDamage, AttackRangeCenti = d.attackRangeCenti,
+            AttackCooldownTicks = d.attackCooldownTicks, ProjectileSpeedCenti = d.projectileSpeedCenti,
+            AttackBonus = d.attackBonus, StockCapacity = d.stockCapacity, StartsBuilt = d.startsBuilt,
             Constructible = d.constructible, HubBuilt = d.hubBuilt, FoodCost = d.foodCost, MineralCost = d.mineralCost, EvoCost = d.evoCost, BuildTimeTicks = d.buildTimeTicks,
             Produces = d.produces ?? Array.Empty<string>(),
         };
