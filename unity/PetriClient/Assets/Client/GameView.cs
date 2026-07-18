@@ -66,7 +66,11 @@ namespace Petri.Client
 
         private MatchBootstrap _match;
         private Sprite _disc, _ring, _thinRing, _square, _squareOutline, _arrow, _diamond;
+        private Sprite _triangle, _pentagon, _hexagon, _octagon, _star, _kite, _cross,
+            _crescent, _bullseye, _diamondOutline;
         private Sprite[] _digits; // runtime 3x5 pixel numerals for tier badges
+        // Per-def silhouettes so every unit and building type reads at a glance.
+        private Sprite[] _unitShape, _buildingShape;
 
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
@@ -172,7 +176,7 @@ namespace Petri.Client
         /// </summary>
         private void BuildSpriteAtlas()
         {
-            var texs = new Texture2D[17];
+            var texs = new Texture2D[27];
             texs[0] = MakeDiscTex(64);
             texs[1] = MakeRingTex(64, 0.80f);
             texs[2] = MakeSquareTex(8);
@@ -184,6 +188,17 @@ namespace Petri.Client
             // ring stays a crisp thin circle at that scale.
             texs[6] = MakeRingTex(256, 0.970f);
             for (int d = 0; d < 10; d++) texs[7 + d] = MakeDigitTex(d);
+            // Silhouette library: one distinct shape per unit/building archetype.
+            texs[17] = MakeRegularPolyTex(64, 3, 90f);   // triangle (point up)
+            texs[18] = MakeRegularPolyTex(64, 5, 90f);   // pentagon
+            texs[19] = MakeRegularPolyTex(64, 6, 0f);    // hexagon (flat top)
+            texs[20] = MakeRegularPolyTex(64, 8, 22.5f); // octagon
+            texs[21] = MakeStarTex(64, 5, 0.45f);        // 5-point star
+            texs[22] = MakeKiteTex(64);                  // narrow dart
+            texs[23] = MakeCrossTex(64, 0.36f);          // plus/burst
+            texs[24] = MakeCrescentTex(64);              // crescent moon
+            texs[25] = MakeBullseyeTex(64);              // ring with a core dot
+            texs[26] = MakeDiamondOutlineTex(64, 0.55f); // hollow diamond
 
             var atlas = new Texture2D(2, 2, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
             // Padding keeps bilinear sampling from bleeding neighbours into each other.
@@ -199,8 +214,65 @@ namespace Petri.Client
             _thinRing = FromAtlas(atlas, uv[6]);
             _digits = new Sprite[10];
             for (int d = 0; d < 10; d++) _digits[d] = FromAtlas(atlas, uv[7 + d]);
+            _triangle = FromAtlas(atlas, uv[17]);
+            _pentagon = FromAtlas(atlas, uv[18]);
+            _hexagon = FromAtlas(atlas, uv[19]);
+            _octagon = FromAtlas(atlas, uv[20]);
+            _star = FromAtlas(atlas, uv[21]);
+            _kite = FromAtlas(atlas, uv[22]);
+            _cross = FromAtlas(atlas, uv[23]);
+            _crescent = FromAtlas(atlas, uv[24]);
+            _bullseye = FromAtlas(atlas, uv[25]);
+            _diamondOutline = FromAtlas(atlas, uv[26]);
 
             foreach (var t in texs) Destroy(t); // the atlas owns the pixels now
+
+            BuildShapeTables();
+        }
+
+        /// <summary>One silhouette per def id so every type reads at a glance. Unknown ids
+        /// (test data, future units) fall back on the old role shapes: diamond = ranged,
+        /// bullseye = leader, disc = everything else; buildings default to the square.</summary>
+        private void BuildShapeTables()
+        {
+            var defs = _match.Defs;
+            _unitShape = new Sprite[defs.Units.Length];
+            for (int u = 0; u < defs.Units.Length; u++)
+            {
+                var d = defs.Units[u];
+                _unitShape[u] = d.Id switch
+                {
+                    "strain.forager" => _disc,          // worker: plain dim dot
+                    "strain.swimmer" => _triangle,      // cheap fast melee
+                    "strain.flagellate" => _kite,       // sprinting flanker
+                    "strain.lysin" => _crescent,        // cheap acid-spitter
+                    "strain.coccus" => _square,         // living wall
+                    "strain.predator" => _pentagon,     // all-round brawler
+                    "strain.cytolysin" => _star,        // elite hunter
+                    "strain.cyst" => _hexagon,          // armored shell
+                    "strain.swarm-leader" => _bullseye, // aura anchor
+                    "strain.sporecaster" => _diamond,   // budget ranged
+                    "strain.secretor" => _diamondOutline, // mid ranged
+                    "strain.toxinocyte" => _cross,      // long-range artillery
+                    _ => d.IsLeader ? _bullseye : d.ProjectileSpeedCenti > 0 ? _diamond : _disc,
+                };
+            }
+            _buildingShape = new Sprite[defs.Buildings.Length];
+            for (int b = 0; b < defs.Buildings.Length; b++)
+            {
+                _buildingShape[b] = defs.Buildings[b].Id switch
+                {
+                    "strain.nucleoid" => _octagon,        // the colony core
+                    "strain.incubator" => _square,        // basic producer
+                    "strain.mutagen-pool" => _ring,       // evolution pool
+                    "strain.sentinel-spire" => _triangle, // defensive spire
+                    "strain.lysis-chamber" => _pentagon,  // tech prongs, one shape each
+                    "strain.flagella-bay" => _kite,
+                    "strain.toxin-gland" => _cross,
+                    "strain.capsule-foundry" => _hexagon,
+                    _ => _square,
+                };
+            }
         }
 
         /// <summary>Sprite for one atlas cell. pixelsPerUnit = the cell's pixel height, so a
@@ -307,7 +379,7 @@ namespace Petri.Client
                 switch (w.Kind[i])
                 {
                     case EntityKind.Building:
-                        sr.sprite = _square;
+                        sr.sprite = _buildingShape[w.DefIndex[i]];
                         sr.transform.localScale = new Vector3(diameter, diameter, 1f);
                         var bc = Dim(OwnerColors[w.Owner[i] % OwnerColors.Length], 0.75f);
                         // Tiered caches read brighter per tier — an armed depot looks the part.
@@ -385,8 +457,8 @@ namespace Petri.Client
                         if (ud.IsLeader) { c = Color.Lerp(c, Color.white, 0.5f); diameter *= 1.25f; }
                         else if (ud.IsWorker) c = Dim(c, 0.7f);
                         if (Time.time < _blinkUntil[i]) c = Color.Lerp(c, Color.white, 0.75f); // hit blink
-                        // Ranged units (they fire projectiles) read as diamonds; melee as discs.
-                        sr.sprite = ud.ProjectileSpeedCenti > 0 ? _diamond : _disc;
+                        // Every unit type wears its own silhouette (see BuildShapeTables).
+                        sr.sprite = _unitShape[w.DefIndex[i]];
                         sr.transform.localScale = new Vector3(diameter, diameter, 1f);
                         sr.color = c;
                         sr.sortingOrder = ud.IsLeader ? 4 : 3;
@@ -788,6 +860,122 @@ namespace Petri.Client
                 {
                     bool edge = x < border || y < border || x >= size - border || y >= size - border;
                     tex.SetPixel(x, y, edge ? Color.white : Color.clear);
+                }
+            tex.Apply();
+            return tex;
+        }
+
+        // ---- Silhouette library: distinct per-type shapes, all runtime-generated.
+
+        /// <summary>Filled polygon (verts in normalized 0..1 space, any winding, may be
+        /// non-convex — even-odd crossing test).</summary>
+        private static Texture2D MakePolyTex(int size, Vector2[] verts)
+        {
+            var tex = NewTex(size);
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    var p = new Vector2((x + 0.5f) / size, (y + 0.5f) / size);
+                    tex.SetPixel(x, y, InsidePoly(p, verts) ? Color.white : Color.clear);
+                }
+            tex.Apply();
+            return tex;
+        }
+
+        private static bool InsidePoly(Vector2 p, Vector2[] v)
+        {
+            bool inside = false;
+            for (int i = 0, j = v.Length - 1; i < v.Length; j = i++)
+                if (v[i].y > p.y != v[j].y > p.y
+                    && p.x < (v[j].x - v[i].x) * (p.y - v[i].y) / (v[j].y - v[i].y) + v[i].x)
+                    inside = !inside;
+            return inside;
+        }
+
+        private static Texture2D MakeRegularPolyTex(int size, int sides, float rotDeg)
+        {
+            var v = new Vector2[sides];
+            for (int i = 0; i < sides; i++)
+            {
+                float a = (rotDeg + i * 360f / sides) * Mathf.Deg2Rad;
+                v[i] = new Vector2(0.5f + 0.48f * Mathf.Cos(a), 0.5f + 0.48f * Mathf.Sin(a));
+            }
+            return MakePolyTex(size, v);
+        }
+
+        private static Texture2D MakeStarTex(int size, int points, float innerFrac)
+        {
+            var v = new Vector2[points * 2];
+            for (int i = 0; i < points * 2; i++)
+            {
+                float r = (i & 1) == 0 ? 0.48f : 0.48f * innerFrac;
+                float a = (90f + i * 180f / points) * Mathf.Deg2Rad;
+                v[i] = new Vector2(0.5f + r * Mathf.Cos(a), 0.5f + r * Mathf.Sin(a));
+            }
+            return MakePolyTex(size, v);
+        }
+
+        // Narrow dart: reads "fast" at a glance.
+        private static Texture2D MakeKiteTex(int size) =>
+            MakePolyTex(size, new[]
+            {
+                new Vector2(0.5f, 0.98f), new Vector2(0.78f, 0.34f),
+                new Vector2(0.5f, 0.02f), new Vector2(0.22f, 0.34f),
+            });
+
+        private static Texture2D MakeCrossTex(int size, float armFrac)
+        {
+            var tex = NewTex(size);
+            float c = (size - 1) * 0.5f, arm = size * armFrac * 0.5f;
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                    tex.SetPixel(x, y, Mathf.Abs(x - c) <= arm || Mathf.Abs(y - c) <= arm
+                        ? Color.white : Color.clear);
+            tex.Apply();
+            return tex;
+        }
+
+        private static Texture2D MakeCrescentTex(int size)
+        {
+            var tex = NewTex(size);
+            float c = (size - 1) * 0.5f, r = size * 0.5f - 1f;
+            float cutX = c + size * 0.28f, cutR = size * 0.40f;
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                    float dc = Mathf.Sqrt((x - cutX) * (x - cutX) + (y - c) * (y - c));
+                    tex.SetPixel(x, y, d <= r && dc >= cutR ? Color.white : Color.clear);
+                }
+            tex.Apply();
+            return tex;
+        }
+
+        // Ring with a core dot — the leader's "command post" glyph.
+        private static Texture2D MakeBullseyeTex(int size)
+        {
+            var tex = NewTex(size);
+            float c = (size - 1) * 0.5f, r = size * 0.5f - 1f;
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                    bool inside = d <= r * 0.40f || (d >= r * 0.74f && d <= r);
+                    tex.SetPixel(x, y, inside ? Color.white : Color.clear);
+                }
+            tex.Apply();
+            return tex;
+        }
+
+        private static Texture2D MakeDiamondOutlineTex(int size, float innerFrac)
+        {
+            var tex = NewTex(size);
+            float c = (size - 1) * 0.5f, r = size * 0.5f - 1f;
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float m = Mathf.Abs(x - c) + Mathf.Abs(y - c);
+                    tex.SetPixel(x, y, m <= r && m >= r * innerFrac ? Color.white : Color.clear);
                 }
             tex.Apply();
             return tex;

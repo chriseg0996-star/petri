@@ -39,6 +39,7 @@ namespace Petri.Client
         private const float DoubleClickSeconds = 0.35f;
         private float _lastClickTime = -10f;
         private int _lastClickDef = -1;
+        private EntityKind _lastClickKind;
         private readonly List<int> _lineUnits = new List<int>();
         private readonly List<int> _lineLeaders = new List<int>();
         private readonly List<Vector2> _rightPath = new List<Vector2>();  // screen-space drawn curve
@@ -816,17 +817,33 @@ namespace Petri.Client
                 Selected.Add(bestUnit);
                 // Double-click on the same unit type → select every one of them you own.
                 int def = w.DefIndex[bestUnit];
-                if (Time.unscaledTime - _lastClickTime <= DoubleClickSeconds && _lastClickDef == def)
+                if (Time.unscaledTime - _lastClickTime <= DoubleClickSeconds
+                    && _lastClickDef == def && _lastClickKind == EntityKind.Unit)
                 {
                     for (int i = 0; i < w.HighWater; i++)
                         if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == MatchBootstrap.HumanPlayer && w.DefIndex[i] == def)
                             Selected.Add(i);
                     _lastClickDef = -1; // triple-click doesn't re-trigger
                 }
-                else _lastClickDef = def;
+                else { _lastClickDef = def; _lastClickKind = EntityKind.Unit; }
                 _lastClickTime = Time.unscaledTime;
             }
-            else if (bestBuilding >= 0) { Selected.Add(bestBuilding); _lastClickDef = -1; }
+            else if (bestBuilding >= 0)
+            {
+                Selected.Add(bestBuilding);
+                // Double-click on the same building type → select every one of them you own.
+                int def = w.DefIndex[bestBuilding];
+                if (Time.unscaledTime - _lastClickTime <= DoubleClickSeconds
+                    && _lastClickDef == def && _lastClickKind == EntityKind.Building)
+                {
+                    for (int i = 0; i < w.HighWater; i++)
+                        if (w.Kind[i] == EntityKind.Building && w.Owner[i] == MatchBootstrap.HumanPlayer && w.DefIndex[i] == def)
+                            Selected.Add(i);
+                    _lastClickDef = -1;
+                }
+                else { _lastClickDef = def; _lastClickKind = EntityKind.Building; }
+                _lastClickTime = Time.unscaledTime;
+            }
             else if (bestNode >= 0) { Selected.Clear(); Selected.Add(bestNode); _lastClickDef = -1; }
             else _lastClickDef = -1;
         }
