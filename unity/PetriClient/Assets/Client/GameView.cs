@@ -71,6 +71,9 @@ namespace Petri.Client
         private Sprite[] _digits; // runtime 3x5 pixel numerals for tier badges
         // Per-def silhouettes so every unit and building type reads at a glance.
         private Sprite[] _unitShape, _buildingShape;
+        // Per-def VISUAL size multiplier (rendering + click hitbox only — collision radii
+        // are untouched, so gameplay and determinism don't move).
+        private float[] _unitScale;
 
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
@@ -299,7 +302,38 @@ namespace Petri.Client
                     _ => _square,
                 };
             }
+
+            // Visual size tiers, all derived from def stats so future units follow suit:
+            // leaders tower over the field, melee grows with its tank stat (PushResistance,
+            // the sim's own blocking weight), ranged stays smaller but grows with reach.
+            int minRange = int.MaxValue, maxRange = int.MinValue;
+            for (int u = 0; u < defs.Units.Length; u++)
+            {
+                var d = defs.Units[u];
+                if (d.AttackDamage <= 0 || d.ProjectileSpeedCenti <= 0) continue;
+                minRange = Mathf.Min(minRange, d.AttackRangeCenti);
+                maxRange = Mathf.Max(maxRange, d.AttackRangeCenti);
+            }
+            _unitScale = new float[defs.Units.Length];
+            for (int u = 0; u < defs.Units.Length; u++)
+            {
+                var d = defs.Units[u];
+                if (d.IsLeader) _unitScale[u] = 1.5f;
+                else if (d.IsWorker) _unitScale[u] = 0.85f;
+                else if (d.AttackDamage > 0 && d.ProjectileSpeedCenti > 0)
+                {
+                    float t = maxRange > minRange
+                        ? (d.AttackRangeCenti - minRange) / (float)(maxRange - minRange) : 0.5f;
+                    _unitScale[u] = Mathf.Lerp(0.85f, 1.15f, t); // longer reach reads bigger
+                }
+                else
+                    _unitScale[u] = 0.9f + 0.15f * Mathf.Clamp(d.PushResistance - 1, 0, 3);
+            }
         }
+
+        /// <summary>Rendering size multiplier for a unit def — the click hitbox uses the
+        /// same number so what you see is what you can click.</summary>
+        public float UnitVisualScale(int defIx) => _unitScale[defIx];
 
         /// <summary>Sprite for one atlas cell. pixelsPerUnit = the cell's pixel height, so a
         /// transform scale of 1 is still exactly one world unit tall (as before atlasing).</summary>
@@ -479,8 +513,9 @@ namespace Petri.Client
                         break;
                     default: // Unit
                         var ud = defs.Units[w.DefIndex[i]];
+                        diameter *= _unitScale[w.DefIndex[i]]; // size tiers: readability at a glance
                         Color c = OwnerColors[w.Owner[i] % OwnerColors.Length];
-                        if (ud.IsLeader) { c = Color.Lerp(c, Color.white, 0.5f); diameter *= 1.25f; }
+                        if (ud.IsLeader) c = Color.Lerp(c, Color.white, 0.5f);
                         else if (ud.IsWorker) c = Dim(c, 0.7f);
                         if (Time.time < _blinkUntil[i]) c = Color.Lerp(c, Color.white, 0.75f); // hit blink
                         // Every unit type wears its own silhouette (see BuildShapeTables).

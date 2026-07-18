@@ -810,9 +810,10 @@ namespace Petri.Client
                 if (w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
                 if (w.Kind[i] == EntityKind.Unit)
                 {
-                    // Hitbox = the drawn circle (leaders render 25% larger).
+                    // Hitbox = the drawn sprite (per-def visual size tiers).
                     var ud = _match.Defs.Units[w.DefIndex[i]];
-                    float r = ud.CollisionRadiusCenti / 100f * (ud.IsLeader ? 1.25f : 1f) + grace;
+                    float scale = _match.View != null ? _match.View.UnitVisualScale(w.DefIndex[i]) : 1f;
+                    float r = ud.CollisionRadiusCenti / 100f * scale + grace;
                     if (dsq <= r * r && dsq < bestUnitSq) { bestUnitSq = dsq; bestUnit = i; }
                 }
                 else if (w.Kind[i] == EntityKind.Building)
