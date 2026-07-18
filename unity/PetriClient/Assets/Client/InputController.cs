@@ -42,6 +42,8 @@ namespace Petri.Client
         private EntityKind _lastClickKind;
         private readonly List<int> _lineUnits = new List<int>();
         private readonly List<int> _lineLeaders = new List<int>();
+        private readonly List<Vector2> _slotPos = new List<Vector2>();
+        private readonly List<(float d, int u, int s)> _asgPairs = new List<(float, int, int)>();
         private readonly List<Vector2> _rightPath = new List<Vector2>();  // screen-space drawn curve
         private readonly List<Vector2> _worldPath = new List<Vector2>();  // world-space, built on release
         private readonly List<float> _cum = new List<float>();            // cumulative arc-length
@@ -515,26 +517,19 @@ namespace Petri.Client
                 while (cols * cols < n) cols++;
                 int rows = (n + cols - 1) / cols;
 
-                // Slots fill north-to-south; hand them out northernmost-first (west-to-east,
-                // entity index breaks ties) so units roughly keep their relative positions
-                // and don't cross. Pure integer sort keys from the Fix raws.
-                _lineUnits.Sort((a, b) =>
-                {
-                    if (w.Pos[a].Y.Raw != w.Pos[b].Y.Raw) return w.Pos[b].Y.Raw.CompareTo(w.Pos[a].Y.Raw);
-                    if (w.Pos[a].X.Raw != w.Pos[b].X.Raw) return w.Pos[a].X.Raw.CompareTo(w.Pos[b].X.Raw);
-                    return a.CompareTo(b);
-                });
-
+                // Build every slot, then greedy min-travel matching: each unit takes a
+                // nearby spot in the grid instead of trekking to a fixed row assignment.
+                _slotPos.Clear();
                 for (int k = 0; k < n; k++)
                 {
                     int row = k / cols, col = k % cols;
                     int rowLen = Mathf.Min(cols, n - row * cols); // short last row stays centered
                     int offX = (2 * col - (rowLen - 1)) * spacingCenti / 2;
                     int offY = ((rows - 1) - 2 * row) * spacingCenti / 2;
-                    _match.Enqueue(new Command { Type = CommandType.Move, A = _lineUnits[k], B = cx + offX, C = cy + offY, D = queue ? 1 : 0 });
-                    if (k < 24) // destination ghosts, capped so huge armies don't spam
-                        _match.View.Ping(new Vector3((cx + offX) / 100f, (cy + offY) / 100f, 0f), GameView.MovePing);
+                    _slotPos.Add(new Vector2((cx + offX) / 100f, (cy + offY) / 100f));
                 }
+                int pings = 24;
+                EnqueueNearestAssignments(w, _lineUnits, _slotPos, 0, n, queue, ref pings);
                 return;
             }
             if (any) _match.View.Ping(new Vector3(wp.x, wp.y, 0f), GameView.MovePing);
@@ -659,25 +654,15 @@ namespace Petri.Client
             centroid /= n + _lineLeaders.Count;
 
             // Leaders take the line itself: spread evenly by arc-length (midpoint slots),
-            // handed out in arc order so they don't cross, blanketing the block in auras.
+            // each taking the nearest free slot, blanketing the block in auras.
+            int pings = 24;
             if (_lineLeaders.Count > 0)
             {
-                _lineLeaders.Sort((a, b) =>
-                {
-                    float sa = NearestArcLength(UnitPos(w, a)), sb = NearestArcLength(UnitPos(w, b));
-                    return sa != sb ? sa.CompareTo(sb) : a.CompareTo(b);
-                });
                 int L = _lineLeaders.Count;
+                _slotPos.Clear();
                 for (int j = 0; j < L; j++)
-                {
-                    Vector2 pos = SampleAt(total * (2 * j + 1) / (2f * L), out _);
-                    _match.Enqueue(new Command
-                    {
-                        Type = CommandType.Move, A = _lineLeaders[j],
-                        B = Mathf.RoundToInt(pos.x * 100f), C = Mathf.RoundToInt(pos.y * 100f),
-                    });
-                    _match.View.Ping(new Vector3(pos.x, pos.y, 0f), GameView.MovePing);
-                }
+                    _slotPos.Add(SampleAt(total * (2 * j + 1) / (2f * L), out _));
+                EnqueueNearestAssignments(w, _lineLeaders, _slotPos, 0, L, false, ref pings);
             }
             if (n == 0) return; // leaders only: the line placement above is the whole order
             Vector2 chord = _worldPath[_worldPath.Count - 1] - _worldPath[0];
@@ -697,36 +682,39 @@ namespace Petri.Client
             int rows = Mathf.Max(2, Mathf.CeilToInt(n / (float)perRowCap));
             int perRow = Mathf.CeilToInt(n / (float)rows);
 
-            // Fill order decides the ranks: melee first (front), then ranged, then unarmed.
-            // Within a class, arc-length order keeps paths from crossing.
-            _lineUnits.Sort((a, b) =>
-            {
-                int ca = FormationRank(w, a), cb = FormationRank(w, b);
-                if (ca != cb) return ca.CompareTo(cb);
-                float sa = NearestArcLength(UnitPos(w, a)), sb = NearestArcLength(UnitPos(w, b));
-                if (sa != sb) return sa.CompareTo(sb);
-                return a.CompareTo(b);
-            });
-
+            // Every slot first (row-major, front rank first). Ranks straddle the drawn
+            // line: front ranks ahead of it, rear ranks behind; midpoint sampling keeps
+            // every rank centered along the curve.
+            _slotPos.Clear();
             for (int k = 0; k < n; k++)
             {
                 int row = k / perRow, idx = k % perRow;
                 int rowLen = Mathf.Min(perRow, n - row * perRow);
-                float s = total * (2 * idx + 1) / (2f * rowLen); // midpoint sampling centers every rank
+                float s = total * (2 * idx + 1) / (2f * rowLen);
                 Vector2 slot = SampleAt(s, out Vector2 tan);
                 Vector2 perp = new Vector2(-tan.y, tan.x);
                 if (Vector2.Dot(perp, refFront) < 0f) perp = -perp;
                 perp.Normalize();
-                // Ranks straddle the drawn line: front ranks ahead of it, rear ranks behind.
                 float frontOff = ((rows - 1) * 0.5f - row) * spacing;
-                Vector2 pos = slot + perp * frontOff;
-                _match.Enqueue(new Command
-                {
-                    Type = CommandType.Move, A = _lineUnits[k],
-                    B = Mathf.RoundToInt(pos.x * 100f), C = Mathf.RoundToInt(pos.y * 100f),
-                });
-                if (k < 24) // destination ghosts, capped so huge armies don't spam
-                    _match.View.Ping(new Vector3(pos.x, pos.y, 0f), GameView.MovePing);
+                _slotPos.Add(slot + perp * frontOff);
+            }
+
+            // Fill order decides the ranks: melee first (front), then ranged, then unarmed —
+            // so each class's chunk of units lines up with its chunk of slots. Within a
+            // class, greedy min-travel matching hands every unit a nearby spot.
+            _lineUnits.Sort((a, b) =>
+            {
+                int ca = FormationRank(w, a), cb = FormationRank(w, b);
+                return ca != cb ? ca.CompareTo(cb) : a.CompareTo(b);
+            });
+            int chunk = 0;
+            while (chunk < n)
+            {
+                int cls = FormationRank(w, _lineUnits[chunk]);
+                int endChunk = chunk + 1;
+                while (endChunk < n && FormationRank(w, _lineUnits[endChunk]) == cls) endChunk++;
+                EnqueueNearestAssignments(w, _lineUnits, _slotPos, chunk, endChunk, false, ref pings);
+                chunk = endChunk;
             }
         }
 
@@ -737,6 +725,47 @@ namespace Petri.Client
             var def = _match.Defs.Units[w.DefIndex[e]];
             if (def.AttackDamage <= 0) return 2;
             return def.ProjectileSpeedCenti > 0 ? 1 : 0;
+        }
+
+        /// <summary>Greedy min-travel matching between units[start..end) and slots[start..end):
+        /// every (unit, slot) pair is ranked by distance and the closest still-free pairs win,
+        /// so units take nearby formation spots instead of trekking across the block. Enqueues
+        /// one Move per unit. Deterministic tie-breaks; near-optimal in practice.</summary>
+        private void EnqueueNearestAssignments(SimWorld w, List<int> units, List<Vector2> slots,
+            int start, int end, bool queue, ref int pingBudget)
+        {
+            int m = end - start;
+            if (m <= 0) return;
+            _asgPairs.Clear();
+            for (int u = 0; u < m; u++)
+            {
+                Vector2 p = UnitPos(w, units[start + u]);
+                for (int s = 0; s < m; s++)
+                    _asgPairs.Add(((slots[start + s] - p).sqrMagnitude, u, s));
+            }
+            _asgPairs.Sort((a, b) => a.d != b.d ? a.d.CompareTo(b.d)
+                : a.u != b.u ? a.u.CompareTo(b.u) : a.s.CompareTo(b.s));
+            var unitDone = new bool[m];
+            var slotDone = new bool[m];
+            int made = 0;
+            foreach (var (d, u, s) in _asgPairs)
+            {
+                if (unitDone[u] || slotDone[s]) continue;
+                unitDone[u] = slotDone[s] = true;
+                Vector2 pos = slots[start + s];
+                _match.Enqueue(new Command
+                {
+                    Type = CommandType.Move, A = units[start + u],
+                    B = Mathf.RoundToInt(pos.x * 100f), C = Mathf.RoundToInt(pos.y * 100f),
+                    D = queue ? 1 : 0,
+                });
+                if (pingBudget > 0) // destination ghosts, capped so huge armies don't spam
+                {
+                    _match.View.Ping(new Vector3(pos.x, pos.y, 0f), GameView.MovePing);
+                    pingBudget--;
+                }
+                if (++made == m) break;
+            }
         }
 
         private Vector2 UnitPos(SimWorld w, int e) =>
@@ -758,22 +787,6 @@ namespace Petri.Client
             }
             tangent = (_worldPath[last] - _worldPath[last - 1]).normalized;
             return _worldPath[last];
-        }
-
-        /// <summary>Arc-length of the point on the polyline nearest to p (for crossing-free slotting).</summary>
-        private float NearestArcLength(Vector2 p)
-        {
-            float bestD = float.MaxValue, bestS = 0f;
-            for (int i = 1; i < _worldPath.Count; i++)
-            {
-                Vector2 a = _worldPath[i - 1], b = _worldPath[i], ab = b - a;
-                float len2 = ab.sqrMagnitude;
-                float t = len2 > 1e-6f ? Mathf.Clamp01(Vector2.Dot(p - a, ab) / len2) : 0f;
-                Vector2 proj = a + ab * t;
-                float d = (p - proj).sqrMagnitude;
-                if (d < bestD) { bestD = d; bestS = _cum[i - 1] + t * (_cum[i] - _cum[i - 1]); }
-            }
-            return bestS;
         }
 
         private void SelectNearest(SimWorld w)
