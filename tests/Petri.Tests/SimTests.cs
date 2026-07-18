@@ -1872,8 +1872,8 @@ namespace Petri.Tests
         {
             string dataDir = FindDataDir();
             var defs = DefLoader.Load(dataDir);
-            Assert.True(defs.Units.Length >= 4);
-            Assert.True(defs.Buildings.Length >= 2);
+            Assert.Equal(13, defs.Units.Length);
+            Assert.Equal(13, defs.Buildings.Length);
             Assert.NotEqual(0UL, defs.DefsHash);
 
             var map = DefLoader.LoadMap(dataDir, "petri-dish");

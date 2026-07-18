@@ -1,0 +1,7 @@
+{
+  "id": "strain.spike-battery",
+  "description": "A calcified turret that fires hardened spikes at anything hostile in range. Static defense is paid for in stone.",
+  "maxHp": 700, "collisionRadiusCenti": 55,
+  "constructible": true, "foodCost": 120, "mineralCost": 50, "buildTimeTicks": 350,
+  "attackDamage": 12, "attackRangeCenti": 500, "attackCooldownTicks": 25, "projectileSpeedCenti": 1400
+}

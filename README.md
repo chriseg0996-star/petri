@@ -64,6 +64,12 @@ runtime, so authored C&C-style art drops in later by swapping them per def id.
   them. Static map data (never sim state, hashed via DefsHash); all three shipped maps have
   symmetric layouts. Every unit and building type wears a distinct runtime-generated 2D
   silhouette; double-click selects all of a type (units and buildings alike).
+- **Strategic buildings**: building weapons and drop-offs are pure def data (`attackDamage`
+  etc., `isDropoff`). Five constructibles layer the midgame: spike-battery (turret, costs
+  minerals), burrow-node (expansion drop-off — pair with a spire for supply), brood-sac
+  (buds free mites; each squashed mite still feeds the enemy 1 evo), chitin-rampart (cheap
+  900 HP wall plug), plasmid-reliquary (40 evo, +3 army attack, fragile raid target;
+  mutagen-pool rebalanced to 15 evo as the durable small buff).
 - **Classic per-unit control**: every unit obeys direct Move / AttackMove / Stop /
   SetFacing — no control layer between the player and their units. Multi-unit right-clicks
   spread into a compact grid centered on the click; right-drag lays the selection along a

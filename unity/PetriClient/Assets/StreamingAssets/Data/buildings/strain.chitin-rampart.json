@@ -1,0 +1,6 @@
+{
+  "id": "strain.chitin-rampart",
+  "description": "A dead-cheap plug of hardened chitin. Does nothing but stand there — wall off a chokepoint and make the enemy chew through it.",
+  "maxHp": 900, "collisionRadiusCenti": 45,
+  "constructible": true, "foodCost": 30, "buildTimeTicks": 150
+}

@@ -1,0 +1,9 @@
+{
+  "id": "strain.mite",
+  "description": "A near-mindless speck budded free from the brood-sac. Individually worthless, endless in aggregate — but each one squashed feeds the enemy an evolutionary point.",
+  "maxHp": 90, "moveSpeedCenti": 260, "collisionRadiusCenti": 18, "turnSpeedCenti": 1100,
+  "pushStrength": 1, "pushResistance": 1,
+  "attackDamage": 3, "attackRangeCenti": 38, "acquireRangeCenti": 700, "attackCooldownTicks": 20,
+  "foodCost": 0, "buildTimeTicks": 300,
+  "isWorker": false
+}

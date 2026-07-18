@@ -1,0 +1,7 @@
+{
+  "id": "strain.burrow-node",
+  "description": "A dug-in expansion node. Workers drop off nutrients and minerals here, so distant fields mine at full pace. Projects no supply — pair it with a sentinel-spire to keep the troops around it fed.",
+  "maxHp": 500, "collisionRadiusCenti": 70,
+  "isDropoff": true,
+  "constructible": true, "foodCost": 150, "buildTimeTicks": 400
+}

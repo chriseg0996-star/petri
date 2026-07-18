@@ -1,0 +1,7 @@
+{
+  "id": "strain.plasmid-reliquary",
+  "description": "A fragile vault of stolen plasmids. While it stands it grants +3 attack to ALL your units — but its thin shell makes it a raid target the owner must defend.",
+  "maxHp": 300, "collisionRadiusCenti": 65,
+  "constructible": true, "evoCost": 40, "buildTimeTicks": 500,
+  "attackBonus": 3
+}

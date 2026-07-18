@@ -1,0 +1,7 @@
+{
+  "id": "strain.brood-sac",
+  "description": "A pulsing sac that buds a slow trickle of free mites — expendable chaff that costs nothing but time. Every mite the enemy squashes still pays them an evolutionary point.",
+  "maxHp": 350, "collisionRadiusCenti": 60,
+  "constructible": true, "foodCost": 100, "buildTimeTicks": 300,
+  "produces": ["strain.mite"]
+}

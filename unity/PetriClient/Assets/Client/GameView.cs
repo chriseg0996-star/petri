@@ -283,6 +283,7 @@ namespace Petri.Client
                     "strain.sporecaster" => _diamond,   // budget ranged
                     "strain.secretor" => _diamondOutline, // mid ranged
                     "strain.toxinocyte" => _cross,      // long-range artillery
+                    "strain.mite" => _disc,             // free chaff: the smallest dot afield
                     _ => d.IsLeader ? _bullseye : d.ProjectileSpeedCenti > 0 ? _diamond : _disc,
                 };
             }
@@ -299,6 +300,11 @@ namespace Petri.Client
                     "strain.flagella-bay" => _kite,
                     "strain.toxin-gland" => _cross,
                     "strain.capsule-foundry" => _hexagon,
+                    "strain.spike-battery" => _star,               // defensive turret
+                    "strain.burrow-node" => _bullseye,             // expansion drop-off
+                    "strain.chitin-rampart" => _squareOutline,     // wall plug
+                    "strain.brood-sac" => _crescent,               // free-mite spawner
+                    "strain.plasmid-reliquary" => _diamondOutline, // fragile evo vault
                     _ => _square,
                 };
             }
@@ -359,10 +365,14 @@ namespace Petri.Client
                 && !Vision.VisibleAt(ToF(w.Pos[attacker].X), ToF(w.Pos[attacker].Y))
                 && !Vision.VisibleAt(ToF(w.Pos[target].X), ToF(w.Pos[target].Y))) return;
             _blinkUntil[target] = Time.time + 0.12f; // white damage blink on the victim
-            // Tiered caches shoot too — their projectile speed comes from rules, not a unit def.
-            float speed = w.Kind[attacker] == EntityKind.Building
-                ? w.Rules.CacheProjectileSpeedCenti / 100f
-                : _match.Defs.Units[w.DefIndex[attacker]].ProjectileSpeedCenti / 100f;
+            // Armed buildings prefer their own def speed; tiered caches fall back on rules.
+            float speed;
+            if (w.Kind[attacker] == EntityKind.Building)
+            {
+                int centi = _match.Defs.Buildings[w.DefIndex[attacker]].ProjectileSpeedCenti;
+                speed = (centi > 0 ? centi : w.Rules.CacheProjectileSpeedCenti) / 100f;
+            }
+            else speed = _match.Defs.Units[w.DefIndex[attacker]].ProjectileSpeedCenti / 100f;
             if (speed <= 0f) return;
             var from = new Vector3(ToF(w.Pos[attacker].X), ToF(w.Pos[attacker].Y), 0f);
             var to = new Vector3(ToF(w.Pos[target].X), ToF(w.Pos[target].Y), 0f);
