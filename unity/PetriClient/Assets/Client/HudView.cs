@@ -48,6 +48,10 @@ namespace Petri.Client
         private int[] _selCounts;
         private int[] _selBuildingCounts;
         private readonly StringBuilder _sb = new StringBuilder(256);
+        // Hover tooltip for build/prong buttons: set while the mouse is over a building
+        // button, drawn as a popup above the panel. Strictly stat-derived gameplay facts.
+        private string _tooltip;
+        private static readonly StringBuilder _tip = new StringBuilder(256);
 
         public void Bind(MatchBootstrap match) => _match = match;
 
@@ -117,10 +121,12 @@ namespace Petri.Client
             if (_match == null || _match.Sim == null) return;
             EnsureStyles();
             _hotRects.Clear();
+            _tooltip = null;
             DrawDragBox();
             DrawTopBar();
             DrawCommandPanel();
             DrawMinimap();
+            DrawTooltip();
 
             // Quit-to-menu, always available top-right.
             if (GUI.Button(Hot(new Rect(Screen.width * 0.5f - 32, 8, 64, 24)), "Menu", _small))
@@ -658,8 +664,10 @@ namespace Petri.Client
                     bool have = PlayerHasBuilding(w, b);
                     string name = PrettyName(pd.Id).Split(' ')[0]; // "Lysis Chamber" → "Lysis"
                     GUI.backgroundColor = have ? hi : oldBg;
-                    if (GUI.Button(Hot(Next()),have ? $"{name}\n<b>✓</b>" : $"{name}\n{Min(pd.MineralCost + "m")}", _button) && !have)
+                    var pr = Next();
+                    if (GUI.Button(Hot(pr), have ? $"{name}\n<b>✓</b>" : $"{name}\n{Min(pd.MineralCost + "m")}", _button) && !have)
                         input.BuildProng(primary, b);
+                    TipIfHovered(pr, pd);
                 }
             }
 
@@ -693,6 +701,61 @@ namespace Petri.Client
 
         /// <summary>Price tag for a build button: only the resources this def actually asks for
         /// (n = nutrients, m = minerals, e = evolutionary points).</summary>
+        /// <summary>Remember a gameplay tooltip while the mouse hovers the given rect.</summary>
+        private void TipIfHovered(Rect r, BuildingDef bd)
+        {
+            if (r.Contains(Event.current.mousePosition)) _tooltip = BuildingTooltip(bd);
+        }
+
+        /// <summary>Strictly stat-derived gameplay summary of a building — every line comes
+        /// from def numbers or a hard rule, no flavour.</summary>
+        private string BuildingTooltip(BuildingDef bd)
+        {
+            _tip.Length = 0;
+            _tip.Append($"<b>{PrettyName(bd.Id)}</b>   {CostLabel(bd)} · {bd.MaxHp} HP · ~{bd.BuildTimeTicks / SimConstants.TicksPerSecond}s\n");
+            if (bd.IsHeadquarters)
+                _tip.Append("Drop-off + supply root — lose it and you are eliminated.\n");
+            if (bd.HubBuilt)
+                _tip.Append("Grown from the nucleoid (one per player); builds itself.\n");
+            if (bd.IsDropoff)
+                _tip.Append("Workers deposit nutrients and minerals here.\n");
+            if (bd.ProducesDense.Length > 0)
+            {
+                _tip.Append("Produces: ");
+                for (int k = 0; k < bd.ProducesDense.Length; k++)
+                {
+                    var ud = _match.Defs.Units[bd.ProducesDense[k]];
+                    if (k > 0) _tip.Append(", ");
+                    _tip.Append(PrettyName(ud.Id));
+                    if (ud.FoodCost == 0) _tip.Append(" (free)");
+                }
+                _tip.Append(".\n");
+            }
+            if (bd.AttackDamage > 0)
+                _tip.Append($"Shoots {bd.AttackDamage} dmg every {bd.AttackCooldownTicks / (float)SimConstants.TicksPerSecond:0.0}s, range {bd.AttackRangeCenti / 100f:0.0}.\n");
+            if (bd.AttackBonus > 0)
+                _tip.Append($"+{bd.AttackBonus} attack to every unit you field while it stands (stacks per copy).\n");
+            if (bd.ProvidesSupply && !bd.IsHeadquarters)
+                _tip.Append($"Supply link: relays the chain, stocks {bd.StockCapacity} food. [U] tier-up: 2x stock & HP, half drain, tier 1+ shoots.\n");
+            if (!bd.IsHeadquarters && !bd.HubBuilt && !bd.IsDropoff && !bd.ProvidesSupply
+                && bd.ProducesDense.Length == 0 && bd.AttackDamage == 0 && bd.AttackBonus == 0)
+                _tip.Append("Impassable blocker — just HP in the way.\n");
+            return _tip.ToString().TrimEnd('\n');
+        }
+
+        /// <summary>The popup itself: a small box above the command panel, right side (over
+        /// the build grids the mouse is on).</summary>
+        private void DrawTooltip()
+        {
+            if (_tooltip == null || !_panelVisible) return;
+            const float width = 420f;
+            float height = _label.CalcHeight(new GUIContent(_tooltip), width - 16f) + 12f;
+            var r = new Rect(_panelRect.xMax - width - 8, _panelRect.y - height - 6, width, height);
+            Tint(r, new Color(0.05f, 0.07f, 0.05f, 0.94f));
+            Tint(new Rect(r.x, r.y, r.width, 1f), new Color(0.34f, 0.4f, 0.34f, 1f)); // hairline top
+            GUI.Label(new Rect(r.x + 8, r.y + 6, r.width - 16, r.height - 12), _tooltip, _label);
+        }
+
         private static string CostLabel(BuildingDef def)
         {
             _cost.Length = 0;
@@ -791,6 +854,7 @@ namespace Petri.Client
                 string key = slot == 0 ? " <b>[B]</b>" : "";
                 if (GUI.Button(Hot(rect), $"{ShortName(defs.Buildings[b].Id)}\n{CostLabel(defs.Buildings[b])}{key}", _button))
                     input.BeginPlacement(b);
+                TipIfHovered(rect, defs.Buildings[b]);
                 slot++;
             }
 
