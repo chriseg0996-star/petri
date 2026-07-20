@@ -7,7 +7,8 @@ namespace Petri.Client
     /// (WASD is reserved for command hotkeys, AoE2-style — S is Stop.)</summary>
     public sealed class CameraRig : MonoBehaviour
     {
-        public static float PanSpeedMult = 1f; // settings knob (persisted by the main menu)
+        public static float PanSpeedMult = 1f;  // settings knob (persisted by the main menu)
+        public static float ZoomSpeedMult = 1f; // settings knob (persisted by the main menu)
 
         private Camera _cam;
         private float _w, _h;
@@ -37,7 +38,7 @@ namespace Petri.Client
             // ---- Zoom: scroll nudges a target size; the camera eases toward it exponentially.
             float scroll = Input.GetAxis("Mouse ScrollWheel");
             if (Mathf.Abs(scroll) > 0.0001f)
-                _targetSize = Mathf.Clamp(_targetSize * (1f - scroll * 3f), _minSize, _maxSize);
+                _targetSize = Mathf.Clamp(_targetSize * (1f - scroll * 3f * ZoomSpeedMult), _minSize, _maxSize);
             float size = Mathf.Lerp(_cam.orthographicSize, _targetSize, 1f - Mathf.Exp(-14f * dt));
             _cam.orthographicSize = size;
 

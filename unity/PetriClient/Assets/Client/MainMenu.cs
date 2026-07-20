@@ -3,34 +3,45 @@ using UnityEngine;
 namespace Petri.Client
 {
     /// <summary>
-    /// Age-of-Empires-style main menu, built at runtime like the rest of the client (IMGUI,
-    /// no scene assets). Campaign / Multiplayer / Replay are visible but disabled stubs;
-    /// SKIRMISH is the working path (map + seed setup → match) since it's how the game is
-    /// tested, and Settings holds the client-side knobs (game speed, camera pan).
-    /// The menu owns the app flow: it boots on Play, launches matches, and matches return
-    /// here via MatchBootstrap.QuitToMenu.
+    /// The game's frontend, built entirely at runtime (IMGUI, no scene assets) so pressing Play
+    /// in any empty scene boots straight into it. Two-level structure: a main page with the
+    /// primary actions, and dedicated Skirmish / Settings / Credits sub-pages. Multiplayer and
+    /// Replays are intentional, visibly-disabled COMING SOON tiles. The menu owns the app flow:
+    /// it boots on Play, launches matches (MatchBootstrap), and matches return here via
+    /// QuitToMenu → ShowMenu.
+    ///
+    /// Responsibilities are split so a later UI Toolkit port only replaces the Draw* layer:
+    ///   - navigation state: MenuPage / _page
+    ///   - configuration state + validation: SkirmishSetupState (wraps MatchBootstrap.Pending*)
+    ///   - styles / textures: MenuStyles (cached; rebuilt only when the UI scale changes)
+    ///   - drawing: the Draw* methods (all layout in 1280x720 reference units × Scale)
+    ///   - match launching: StartSkirmish
     /// </summary>
     public sealed class MainMenu : MonoBehaviour
     {
         public static MainMenu Instance { get; private set; }
 
-        private enum Panel { Root, Skirmish, Settings }
+        private enum MenuPage { Main, Skirmish, Settings, Credits }
 
-        private static readonly string[] Maps = { "petri-dish", "capillary", "agar-plate" };
-        private static readonly string[] MapLabels =
-        {
-            "Petri Dish  (square, up to 8p)",
-            "Capillary  (long, 2p)",
-            "Agar Plate  (large ring, up to 32p)",
-        };
-        private static readonly int[] MapMaxPlayers = { 8, 2, 32 }; // must match each map's spawn count
+        private const string TaglineText = "A deterministic microbial real-time strategy game";
 
-        private Panel _panel = Panel.Root;
+        // PlayerPrefs keys (the "skitter." prefix predates the Petri rename; kept so existing
+        // saved values keep working).
+        private const string PrefGameSpeed = "skitter.gameSpeed";
+        private const string PrefPanSpeed = "skitter.panSpeed";
+        private const string PrefZoomSpeed = "skitter.zoomSpeed";
+        private const string PrefFogDefault = "skitter.fogDefault";
+
+        // Settings chips: shared multiplier steps for camera pan / zoom sensitivity.
+        private static readonly float[] MultSteps = { 0.5f, 1f, 1.5f, 2f, 2.5f, 3f };
+        private static readonly string[] MultLabels = { "×0.5", "×1", "×1.5", "×2", "×2.5", "×3" };
+        private static readonly string[] OnOffLabels = { "On", "Off" };
+        private static readonly string[] OpponentLabels = { "Bots", "Sandbox" };
+
+        private MenuPage _page = MenuPage.Main;
         private bool _visible = true;
-        private string _seedText = "7";
-        private int _mapIx;
-        private GUIStyle _title, _tagline, _button, _buttonSub, _label, _heading;
-        private Texture2D _white;
+        private readonly SkirmishSetupState _setup = new SkirmishSetupState();
+        private MenuStyles _s;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
@@ -40,216 +51,376 @@ namespace Petri.Client
             DontDestroyOnLoad(go);
             Instance = go.AddComponent<MainMenu>();
             MatchBootstrap.EnsureCamera(); // dark backdrop behind the menu
-            MatchBootstrap.GameSpeed = PlayerPrefs.GetFloat("skitter.gameSpeed", 1f);
-            CameraRig.PanSpeedMult = PlayerPrefs.GetFloat("skitter.panSpeed", 1f);
+            MatchBootstrap.GameSpeed = PlayerPrefs.GetFloat(PrefGameSpeed, 1f);
+            MatchBootstrap.PendingFog = PlayerPrefs.GetInt(PrefFogDefault, 1) != 0;
+            CameraRig.PanSpeedMult = PlayerPrefs.GetFloat(PrefPanSpeed, 1f);
+            CameraRig.ZoomSpeedMult = PlayerPrefs.GetFloat(PrefZoomSpeed, 1f);
         }
 
         public void ShowMenu()
         {
             _visible = true;
-            _panel = Panel.Root;
+            GoTo(MenuPage.Main);
+        }
+
+        private void GoTo(MenuPage page)
+        {
+            _page = page;
+            // Revalidate on entry: the error list must be current before Start is drawn.
+            if (page == MenuPage.Skirmish) _setup.Revalidate();
         }
 
         private void OnGUI()
         {
             if (!_visible) return;
-            EnsureStyles();
+            if (_s == null) _s = new MenuStyles();
+            _s.Ensure();
 
-            // Full-screen backdrop.
-            var old = GUI.color;
-            GUI.color = new Color(0.05f, 0.07f, 0.05f, 1f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), _white);
-            GUI.color = old;
+            DrawBackground();
+            HandleEscape();
 
-            float cx = Screen.width * 0.5f;
-            GUI.Label(new Rect(0, Screen.height * 0.12f, Screen.width, 80), "PETRI", _title);
-            GUI.Label(new Rect(0, Screen.height * 0.12f + 74, Screen.width, 30),
-                "a deterministic microbial RTS", _tagline);
-
-            switch (_panel)
+            switch (_page)
             {
-                case Panel.Root: DrawRoot(cx); break;
-                case Panel.Skirmish: DrawSkirmish(cx); break;
-                case Panel.Settings: DrawSettings(cx); break;
+                case MenuPage.Main: DrawMainPage(); break;
+                case MenuPage.Skirmish: DrawSkirmishPage(); break;
+                case MenuPage.Settings: DrawSettingsPage(); break;
+                case MenuPage.Credits: DrawCreditsPage(); break;
             }
         }
 
-        private void DrawRoot(float cx)
+        /// <summary>Reference units (1280x720 design) → pixels.</summary>
+        private float S(float v) => v * _s.Scale;
+
+        private void HandleEscape()
         {
-            float w = 340f, h = 52f, gap = 12f;
-            float y = Screen.height * 0.34f;
-            Rect Next() { var r = new Rect(cx - w * 0.5f, y, w, h); y += h + gap; return r; }
-
-            GUI.enabled = false;
-            GUI.Button(Next(), "Campaign\n<size=10><i>coming soon</i></size>", _buttonSub);
-            GUI.enabled = true;
-
-            if (GUI.Button(Next(), "Skirmish", _button)) _panel = Panel.Skirmish;
-
-            GUI.enabled = false;
-            GUI.Button(Next(), "Multiplayer\n<size=10><i>coming soon</i></size>", _buttonSub);
-            GUI.Button(Next(), "Replay\n<size=10><i>coming soon</i></size>", _buttonSub);
-            GUI.enabled = true;
-
-            if (GUI.Button(Next(), "Settings", _button)) _panel = Panel.Settings;
-            if (GUI.Button(Next(), "Exit", _button)) Application.Quit();
-        }
-
-        // Stepping 2..32 one seat at a time would be 30 clicks; jump through useful sizes.
-        private static readonly int[] PlayerSteps = { 2, 3, 4, 6, 8, 12, 16, 24, 32 };
-
-        private static int NextPlayerStep(int current, int maxP)
-        {
-            for (int i = 0; i < PlayerSteps.Length; i++)
-                if (PlayerSteps[i] > current && PlayerSteps[i] <= maxP) return PlayerSteps[i];
-            return 2; // wrap
-        }
-
-        private void DrawSkirmish(float cx)
-        {
-            float w = 420f;
-            float x = cx - w * 0.5f;
-            float y = Screen.height * 0.28f; // the team grid makes this panel tall
-
-            GUI.Label(new Rect(x, y, w, 28), "SKIRMISH", _heading);
-            y += 34;
-
-            // Start (and Back) ride at the TOP: with up to 32 team buttons the settings below
-            // run long, and anything under them can fall off the bottom of the screen.
-            if (GUI.Button(new Rect(x, y, w - 126, 46), "<b>Start Match</b>", _button)) StartSkirmish();
-            if (GUI.Button(new Rect(x + w - 120, y, 120, 46), "Back", _buttonSub)) _panel = Panel.Root;
-            y += 56;
-
-            GUI.Label(new Rect(x, y, 120, 26), "Map", _label);
-            if (GUI.Button(new Rect(x + 130, y, w - 130, 26), MapLabels[_mapIx] + "  ▸", _buttonSub))
+            var e = Event.current;
+            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape && _page != MenuPage.Main)
             {
-                _mapIx = (_mapIx + 1) % Maps.Length;
-                // A map can't seat more players than it has spawns.
-                MatchBootstrap.PendingPlayers = Mathf.Min(MatchBootstrap.PendingPlayers, MapMaxPlayers[_mapIx]);
+                GoTo(MenuPage.Main);
+                e.Use();
             }
-            y += 34;
+        }
 
-            GUI.Label(new Rect(x, y, 120, 26), "Players", _label);
-            int maxP = MapMaxPlayers[_mapIx];
-            int bots = MatchBootstrap.PendingPlayers - 1;
-            string pLabel = maxP <= 2
-                ? "2  —  you + 1 bot  (map seats 2)"
-                : $"{MatchBootstrap.PendingPlayers}  —  you + {bots} bot{(bots == 1 ? "" : "s")}  ▸";
-            if (GUI.Button(new Rect(x + 130, y, w - 130, 26), pLabel, _buttonSub) && maxP > 2)
-                MatchBootstrap.PendingPlayers = NextPlayerStep(MatchBootstrap.PendingPlayers, maxP);
-            y += 34;
+        // ---- Background & headers --------------------------------------------------
 
-            // ---- Teams: one button per seat, click to cycle its team. Same team = allies.
-            GUI.Label(new Rect(x, y, 120, 26), "Teams", _label);
-            if (GUI.Button(new Rect(x + 130, y, 90, 26), "Free-for-all", _buttonSub))
-                for (int p = 0; p < MatchBootstrap.MaxPlayers; p++) MatchBootstrap.PendingTeams[p] = p;
-            if (GUI.Button(new Rect(x + 226, y, 90, 26), "Split 2", _buttonSub))
-                for (int p = 0; p < MatchBootstrap.MaxPlayers; p++)
-                    MatchBootstrap.PendingTeams[p] = p < MatchBootstrap.PendingPlayers / 2 ? 0 : 1;
-            y += 30;
+        private void DrawBackground()
+        {
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), _s.BgGradient,
+                ScaleMode.StretchToFill);
+            // Soft green bloom behind the upper third — light through agar.
+            float gw = Mathf.Max(Screen.width * 0.9f, S(900));
+            GUI.DrawTexture(new Rect((Screen.width - gw) * 0.5f, Screen.height * 0.06f - gw * 0.30f,
+                gw, gw * 0.75f), _s.Glow, ScaleMode.StretchToFill);
+        }
 
-            // Two roomy columns for small games; four compact ones once the grid gets long.
-            int seats = MatchBootstrap.PendingPlayers;
+        private void DrawHeader()
+        {
+            GUI.Label(new Rect(0, Screen.height * 0.12f, Screen.width, S(72)), "PETRI", _s.Title);
+            GUI.Label(new Rect(0, Screen.height * 0.12f + S(70), Screen.width, S(24)),
+                TaglineText, _s.Tagline);
+        }
+
+        private void DrawPageHeader(string title)
+        {
+            GUI.Label(new Rect(0, S(24), Screen.width, S(36)), title, _s.PageTitle);
+            float uw = S(64);
+            GUI.DrawTexture(new Rect((Screen.width - uw) * 0.5f, S(62), uw, S(3)), _s.AccentBar,
+                ScaleMode.StretchToFill);
+        }
+
+        // ---- Shared widgets ----------------------------------------------------------
+
+        private bool DrawPrimaryButton(Rect r, string label) => GUI.Button(r, label, _s.Primary);
+
+        private bool DrawSecondaryButton(Rect r, string label) => GUI.Button(r, label, _s.Secondary);
+
+        private void DrawComingSoonButton(Rect r, string label)
+        {
+            GUI.Label(r, GUIContent.none, _s.DisabledTile);
+            GUI.Label(new Rect(r.x, r.y + r.height * 0.08f, r.width, r.height * 0.55f),
+                label, _s.DisabledTitle);
+            GUI.Label(new Rect(r.x, r.y + r.height * 0.55f, r.width, r.height * 0.38f),
+                "COMING SOON", _s.ComingSoon);
+        }
+
+        /// <summary>Row of equal-width selectable chips; returns the (possibly new) selection.</summary>
+        private int DrawChips(Rect r, string[] labels, int selected)
+        {
+            float gap = S(6);
+            float w = (r.width - gap * (labels.Length - 1)) / labels.Length;
+            int result = selected;
+            for (int i = 0; i < labels.Length; i++)
+            {
+                var cr = new Rect(r.x + i * (w + gap), r.y, w, r.height);
+                if (GUI.Button(cr, labels[i], i == selected ? _s.ChipOn : _s.Chip) && i != selected)
+                    result = i;
+            }
+            return result;
+        }
+
+        private static int NearestIx(float[] steps, float value)
+        {
+            int best = 0;
+            for (int i = 1; i < steps.Length; i++)
+                if (Mathf.Abs(steps[i] - value) < Mathf.Abs(steps[best] - value)) best = i;
+            return best;
+        }
+
+        // ---- Main page -----------------------------------------------------------------
+
+        private void DrawMainPage()
+        {
+            DrawHeader();
+
+            float w = S(MenuStyles.MenuButtonW);
+            float x = (Screen.width - w) * 0.5f;
+            float y = Mathf.Max(Screen.height * 0.36f, Screen.height * 0.12f + S(120));
+            float gap = S(10);
+
+            if (DrawPrimaryButton(new Rect(x, y, w, S(56)), "SKIRMISH")) GoTo(MenuPage.Skirmish);
+            y += S(56) + gap;
+
+            DrawComingSoonButton(new Rect(x, y, w, S(46)), "MULTIPLAYER");
+            y += S(46) + gap;
+            DrawComingSoonButton(new Rect(x, y, w, S(46)), "REPLAYS");
+            y += S(46) + gap;
+
+            if (DrawSecondaryButton(new Rect(x, y, w, S(46)), "SETTINGS")) GoTo(MenuPage.Settings);
+            y += S(46) + gap;
+            if (DrawSecondaryButton(new Rect(x, y, w, S(46)), "CREDITS")) GoTo(MenuPage.Credits);
+            y += S(46) + gap;
+            if (DrawSecondaryButton(new Rect(x, y, w, S(46)), "QUIT")) Application.Quit();
+        }
+
+        // ---- Skirmish setup ---------------------------------------------------------------
+
+        private void DrawSkirmishPage()
+        {
+            DrawPageHeader("SKIRMISH SETUP");
+
+            float pw = Mathf.Min(S(700), Screen.width - S(40));
+            var panel = new Rect((Screen.width - pw) * 0.5f, S(80), pw, Screen.height - S(80) - S(20));
+            GUI.Label(panel, GUIContent.none, _s.Panel);
+
+            float pad = S(24);
+            float x = panel.x + pad;
+            float w = panel.width - pad * 2f;
+            float y = panel.y + S(18);
+            float labelW = S(MenuStyles.LabelW);
+            float rowH = S(30);
+            float rowGap = S(8);
+
+            Rect Control(float cy) => new Rect(x + labelW, cy, w - labelW, rowH);
+            void RowLabel(string t, float cy) =>
+                GUI.Label(new Rect(x, cy, labelW, rowH), t, _s.SectionLabel);
+
+            // Map.
+            RowLabel("Map", y);
+            int newMap = DrawChips(Control(y), SkirmishSetupState.MapNames, _setup.MapIx);
+            if (newMap != _setup.MapIx) _setup.SelectMap(newMap);
+            y += rowH + S(2);
+            GUI.Label(new Rect(x + labelW, y, w - labelW, S(18)), _setup.MapBlurb, _s.Dim);
+            y += S(18) + rowGap;
+
+            // Player count (choices are pre-filtered to the map's spawn count).
+            RowLabel("Players", y);
+            int newP = DrawChips(Control(y), _setup.PlayerChoiceLabels, _setup.PlayerChoiceIx);
+            if (newP != _setup.PlayerChoiceIx) _setup.SelectPlayerChoice(newP);
+            y += rowH + rowGap;
+
+            // Opponent.
+            RowLabel("Opponent", y);
+            int botIx = DrawChips(Control(y), OpponentLabels, _setup.Bots ? 0 : 1);
+            _setup.Bots = botIx == 0;
+            y += rowH + S(2);
+            GUI.Label(new Rect(x + labelW, y, w - labelW, S(18)), _setup.OpponentBlurb, _s.Dim);
+            y += S(18) + rowGap;
+
+            // Fog of war.
+            RowLabel("Fog of War", y);
+            int fogIx = DrawChips(Control(y), OnOffLabels, _setup.Fog ? 0 : 1);
+            _setup.Fog = fogIx == 0;
+            y += rowH + rowGap;
+
+            // Game speed (client pacing only; the sim stays deterministic).
+            RowLabel("Game Speed", y);
+            int spIx = DrawChips(Control(y), SkirmishSetupState.GameSpeedLabels,
+                NearestIx(SkirmishSetupState.GameSpeedSteps, MatchBootstrap.GameSpeed));
+            SetGameSpeed(SkirmishSetupState.GameSpeedSteps[spIx]);
+            y += rowH + rowGap;
+
+            // Seed.
+            RowLabel("Seed", y);
+            string seed = GUI.TextField(new Rect(x + labelW, y, w - labelW - S(110), rowH),
+                _setup.SeedText, 20, _s.Field);
+            if (seed != _setup.SeedText)
+            {
+                _setup.SeedText = seed;
+                _setup.Revalidate();
+            }
+            if (GUI.Button(new Rect(x + w - S(100), y, S(100), rowH), "Random", _s.Chip))
+                _setup.RandomizeSeed();
+            y += rowH + rowGap;
+
+            // Teams: presets, then one cycling chip per seat (same team = allies).
+            RowLabel("Teams", y);
+            if (GUI.Button(new Rect(x + labelW, y, S(130), rowH), "Free-for-all",
+                    _setup.IsFreeForAll ? _s.ChipOn : _s.Chip))
+                _setup.ApplyFreeForAll();
+            if (GUI.Button(new Rect(x + labelW + S(136), y, S(130), rowH), "Two teams",
+                    _setup.IsTwoTeamSplit ? _s.ChipOn : _s.Chip))
+                _setup.ApplyTwoTeams();
+            y += rowH + S(6);
+
+            int seats = _setup.Players;
             int cols = seats <= 8 ? 2 : 4;
-            float rowH = seats <= 8 ? 28f : 22f;
-            float cellW = w / cols - 4f;
+            float cellH = seats <= 8 ? S(26) : S(21);
+            float cellGap = S(4);
+            float cellW = (w - labelW - cellGap * (cols - 1)) / cols;
             for (int p = 0; p < seats; p++)
             {
-                var cell = new Rect(x + (p % cols) * (w / cols), y + (p / cols) * rowH, cellW, rowH - 2f);
-                string label = cols == 2
-                    ? $"P{p} {(p == 0 ? "You" : "Bot")}  —  Team {MatchBootstrap.PendingTeams[p] + 1}"
-                    : $"{(p == 0 ? "You" : "P" + p)} T{MatchBootstrap.PendingTeams[p] + 1}";
-                if (GUI.Button(cell, label, _buttonSub))
-                    MatchBootstrap.PendingTeams[p] = (MatchBootstrap.PendingTeams[p] + 1) % seats;
+                var cell = new Rect(x + labelW + (p % cols) * (cellW + cellGap),
+                    y + (p / cols) * (cellH + S(3)), cellW, cellH);
+                if (GUI.Button(cell, _setup.SeatLabels[p], _s.SeatChip)) _setup.CycleSeatTeam(p);
             }
-            y += ((seats + cols - 1) / cols) * rowH + 8;
+            y += Mathf.Ceil(seats / (float)cols) * (cellH + S(3));
 
-            GUI.Label(new Rect(x, y, 120, 26), "Seed", _label);
-            _seedText = GUI.TextField(new Rect(x + 130, y, w - 220, 26), _seedText, 12);
-            if (GUI.Button(new Rect(x + w - 82, y, 82, 26), "Random", _buttonSub))
-                _seedText = ((uint)Random.Range(1, int.MaxValue)).ToString();
-            y += 34;
-
-            GUI.Label(new Rect(x, y, 120, 26), "Opponent", _label);
-            if (GUI.Button(new Rect(x + 130, y, w - 130, 26),
-                MatchBootstrap.PendingBot ? "Computer — econ + attack waves  ▸" : "None — sandbox  ▸", _buttonSub))
-                MatchBootstrap.PendingBot = !MatchBootstrap.PendingBot;
-            y += 34;
-
-            GUI.Label(new Rect(x, y, 120, 26), "Fog of War", _label);
-            if (GUI.Button(new Rect(x + 130, y, w - 130, 26),
-                MatchBootstrap.PendingFog ? "On  ▸" : "Off — all-seeing  ▸", _buttonSub))
-                MatchBootstrap.PendingFog = !MatchBootstrap.PendingFog;
-            y += 34;
-
-            GUI.Label(new Rect(x, y, w, 44), !MatchBootstrap.PendingBot
-                ? "<i>Rival strains grow and defend but have no general — perfect for drilling your swarms.</i>"
-                : MatchBootstrap.PendingPlayers > 2
-                    ? "<i>Every strain for itself: each rival feeds, divides, and throws attack waves at whoever it finds first.</i>"
-                    : "<i>The rival strain feeds, divides, and throws attack waves at your colony — hold the line.</i>", _label);
+            // Action row pinned to the panel bottom; errors sit beside the buttons so they
+            // never collide with a tall 32-seat team grid.
+            float actionH = S(48);
+            float ay = panel.yMax - S(18) - actionH;
+            if (DrawSecondaryButton(new Rect(x, ay, S(130), actionH), "BACK")) GoTo(MenuPage.Main);
+            var startRect = new Rect(x + w - S(270), ay, S(270), actionH);
+            if (_setup.IsValid)
+            {
+                if (GUI.Button(startRect, "START MATCH", _s.Start)) StartSkirmish();
+            }
+            else
+            {
+                GUI.Label(startRect, "START MATCH", _s.StartOff);
+                GUI.Label(new Rect(x + S(140), ay - S(4), w - S(140) - S(280), actionH + S(8)),
+                    _setup.ErrorText, _s.Error);
+            }
         }
 
-        private void DrawSettings(float cx)
+        // ---- Settings -------------------------------------------------------------------------
+
+        private void DrawSettingsPage()
         {
-            float w = 420f;
-            float x = cx - w * 0.5f;
-            float y = Screen.height * 0.34f;
+            DrawPageHeader("SETTINGS");
 
-            GUI.Label(new Rect(x, y, w, 28), "SETTINGS", _heading);
-            y += 44;
+            float pw = Mathf.Min(S(600), Screen.width - S(40));
+            float ph = S(330);
+            var panel = new Rect((Screen.width - pw) * 0.5f, S(96), pw, ph);
+            GUI.Label(panel, GUIContent.none, _s.Panel);
 
-            GUI.Label(new Rect(x, y, 200, 24), $"Game speed  ×{MatchBootstrap.GameSpeed:0.0}", _label);
-            float gs = GUI.HorizontalSlider(new Rect(x + 210, y + 6, w - 210, 16), MatchBootstrap.GameSpeed, 0.5f, 4f);
-            gs = Mathf.Round(gs * 2f) / 2f; // half-step detents
-            if (!Mathf.Approximately(gs, MatchBootstrap.GameSpeed))
+            float pad = S(24);
+            float x = panel.x + pad;
+            float w = panel.width - pad * 2f;
+            float y = panel.y + S(20);
+            float labelW = S(170);
+            float rowH = S(30);
+            float rowGap = S(12);
+
+            Rect Control(float cy) => new Rect(x + labelW, cy, w - labelW, rowH);
+            void RowLabel(string t, float cy) =>
+                GUI.Label(new Rect(x, cy, labelW, rowH), t, _s.SectionLabel);
+
+            RowLabel("Game speed", y);
+            int spIx = DrawChips(Control(y), SkirmishSetupState.GameSpeedLabels,
+                NearestIx(SkirmishSetupState.GameSpeedSteps, MatchBootstrap.GameSpeed));
+            SetGameSpeed(SkirmishSetupState.GameSpeedSteps[spIx]);
+            y += rowH + rowGap;
+
+            RowLabel("Fog of war default", y);
+            int fogIx = DrawChips(Control(y), OnOffLabels, MatchBootstrap.PendingFog ? 0 : 1);
+            bool fog = fogIx == 0;
+            if (fog != MatchBootstrap.PendingFog)
             {
-                MatchBootstrap.GameSpeed = gs;
-                PlayerPrefs.SetFloat("skitter.gameSpeed", gs);
+                MatchBootstrap.PendingFog = fog;
+                PlayerPrefs.SetInt(PrefFogDefault, fog ? 1 : 0);
             }
-            y += 34;
+            y += rowH + rowGap;
 
-            GUI.Label(new Rect(x, y, 200, 24), $"Camera pan  ×{CameraRig.PanSpeedMult:0.0}", _label);
-            float ps = GUI.HorizontalSlider(new Rect(x + 210, y + 6, w - 210, 16), CameraRig.PanSpeedMult, 0.5f, 3f);
-            ps = Mathf.Round(ps * 2f) / 2f;
-            if (!Mathf.Approximately(ps, CameraRig.PanSpeedMult))
+            RowLabel("Camera pan speed", y);
+            int panIx = DrawChips(Control(y), MultLabels, NearestIx(MultSteps, CameraRig.PanSpeedMult));
+            if (!Mathf.Approximately(MultSteps[panIx], CameraRig.PanSpeedMult))
             {
-                CameraRig.PanSpeedMult = ps;
-                PlayerPrefs.SetFloat("skitter.panSpeed", ps);
+                CameraRig.PanSpeedMult = MultSteps[panIx];
+                PlayerPrefs.SetFloat(PrefPanSpeed, CameraRig.PanSpeedMult);
             }
-            y += 44;
+            y += rowH + rowGap;
 
-            GUI.Label(new Rect(x, y, w, 24), "<i>Game speed paces real time only — the sim stays deterministic.</i>", _label);
-            y += 40;
-            if (GUI.Button(new Rect(x, y, 120, 34), "Back", _buttonSub)) _panel = Panel.Root;
+            RowLabel("Zoom sensitivity", y);
+            int zoomIx = DrawChips(Control(y), MultLabels, NearestIx(MultSteps, CameraRig.ZoomSpeedMult));
+            if (!Mathf.Approximately(MultSteps[zoomIx], CameraRig.ZoomSpeedMult))
+            {
+                CameraRig.ZoomSpeedMult = MultSteps[zoomIx];
+                PlayerPrefs.SetFloat(PrefZoomSpeed, CameraRig.ZoomSpeedMult);
+            }
+            y += rowH + rowGap;
+
+            GUI.Label(new Rect(x, y, w, S(20)),
+                "Game speed paces real time only — the simulation stays deterministic.", _s.Dim);
+
+            float actionH = S(42);
+            float ay = panel.yMax - S(18) - actionH;
+            if (DrawSecondaryButton(new Rect(x, ay, S(130), actionH), "BACK")) GoTo(MenuPage.Main);
+            if (DrawSecondaryButton(new Rect(x + w - S(200), ay, S(200), actionH), "RESET TO DEFAULTS"))
+                ResetSettings();
         }
+
+        private static void SetGameSpeed(float v)
+        {
+            if (Mathf.Approximately(v, MatchBootstrap.GameSpeed)) return;
+            MatchBootstrap.GameSpeed = v;
+            PlayerPrefs.SetFloat(PrefGameSpeed, v);
+        }
+
+        private static void ResetSettings()
+        {
+            MatchBootstrap.GameSpeed = 1f;
+            MatchBootstrap.PendingFog = true;
+            CameraRig.PanSpeedMult = 1f;
+            CameraRig.ZoomSpeedMult = 1f;
+            PlayerPrefs.SetFloat(PrefGameSpeed, 1f);
+            PlayerPrefs.SetInt(PrefFogDefault, 1);
+            PlayerPrefs.SetFloat(PrefPanSpeed, 1f);
+            PlayerPrefs.SetFloat(PrefZoomSpeed, 1f);
+        }
+
+        // ---- Credits ------------------------------------------------------------------------------
+
+        private void DrawCreditsPage()
+        {
+            DrawPageHeader("CREDITS");
+
+            float pw = Mathf.Min(S(520), Screen.width - S(40));
+            float ph = S(280);
+            var panel = new Rect((Screen.width - pw) * 0.5f, S(110), pw, ph);
+            GUI.Label(panel, GUIContent.none, _s.Panel);
+
+            GUI.Label(new Rect(panel.x, panel.y + S(36), panel.width, S(44)), "PETRI", _s.PageTitle);
+            GUI.Label(new Rect(panel.x, panel.y + S(92), panel.width, S(26)),
+                "Created by Christopher Godines Hernández", _s.Body);
+            GUI.Label(new Rect(panel.x, panel.y + S(124), panel.width, S(22)),
+                "Deterministic microbial RTS", _s.Tagline);
+
+            float bw = S(130);
+            if (DrawSecondaryButton(new Rect(panel.x + (panel.width - bw) * 0.5f,
+                    panel.yMax - S(60), bw, S(42)), "BACK"))
+                GoTo(MenuPage.Main);
+        }
+
+        // ---- Match launch ---------------------------------------------------------------------------
 
         private void StartSkirmish()
         {
-            if (!ulong.TryParse(_seedText, out ulong seed) || seed == 0) seed = 7;
-            MatchBootstrap.PendingSeed = seed;
-            MatchBootstrap.PendingMap = Maps[_mapIx];
+            if (!_setup.Validate()) return; // re-check right before launch
+            MatchBootstrap.PendingSeed = _setup.ParsedSeed;
+            MatchBootstrap.PendingMap = _setup.MapId;
             _visible = false;
             new GameObject("PetriMatch").AddComponent<MatchBootstrap>();
-        }
-
-        private void EnsureStyles()
-        {
-            if (_title != null) return;
-            _white = new Texture2D(1, 1);
-            _white.SetPixel(0, 0, Color.white);
-            _white.Apply();
-            _title = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 64, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
-            };
-            _title.normal.textColor = new Color(0.85f, 0.95f, 0.7f);
-            _tagline = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.MiddleCenter, richText = true };
-            _tagline.normal.textColor = new Color(0.6f, 0.7f, 0.55f);
-            _button = new GUIStyle(GUI.skin.button) { fontSize = 18, richText = true };
-            _buttonSub = new GUIStyle(GUI.skin.button) { fontSize = 13, richText = true, alignment = TextAnchor.MiddleCenter };
-            _label = new GUIStyle(GUI.skin.label) { fontSize = 13, richText = true, wordWrap = true };
-            _heading = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold };
-            _heading.normal.textColor = new Color(0.85f, 0.95f, 0.7f);
         }
     }
 }
