@@ -66,6 +66,13 @@ namespace Petri.Client
         private Sprite[] _digits;
         private Sprite[] _buildingShape; // per-def silhouettes so buildings read at a glance
 
+        // Territory overlay: one texture pixel per 2u territory cell, under everything.
+        private Texture2D _terrTex;
+        private SpriteRenderer _terrRenderer;
+        private Color32[] _terrPixels;
+        private float _terrNext;
+        private const float TerritoryInterval = 0.12f;
+
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
         private Texture2D _fogTex;
@@ -122,6 +129,23 @@ namespace Petri.Client
                 rim.color = new Color(0.34f, 0.38f, 0.33f, 0.9f);
                 rim.sortingOrder = 1;
             }
+
+            // The organisms themselves: a low texture where each pixel is one 2u territory
+            // cell, rendered UNDER walls and entities. Bilinear filtering rounds the cell
+            // edges into soft organic borders for free.
+            _terrTex = new Texture2D(world.TerritoryCellsX, world.TerritoryCellsY, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp,
+            };
+            _terrPixels = new Color32[world.TerritoryCellsX * world.TerritoryCellsY];
+            var terrGo = new GameObject("territory");
+            terrGo.transform.SetParent(transform);
+            _terrRenderer = terrGo.AddComponent<SpriteRenderer>();
+            _terrRenderer.sprite = Sprite.Create(_terrTex,
+                new Rect(0, 0, world.TerritoryCellsX, world.TerritoryCellsY), Vector2.zero,
+                100f / SimWorld.CellCenti); // 1 px per cell → cell-size world units per px
+            _terrRenderer.transform.position = Vector3.zero;
+            _terrRenderer.sortingOrder = -2;
 
             if (MatchBootstrap.PendingFog)
             {
@@ -241,6 +265,7 @@ namespace Petri.Client
             var defs = _match.Defs;
 
             UpdateFog(w, defs);
+            UpdateTerritory(w);
 
             int body = 0, overlay = 0;
             var input = _match.Input;
@@ -296,6 +321,19 @@ namespace Petri.Client
                     if (w.ConstructionRemaining[i] > 0) bc.a = 0.45f; // translucent site
                     sr.color = bc;
                     sr.sortingOrder = 2;
+
+                    // The NUCLEUS is the organism's heart — crown it with a bright star so
+                    // both cores read instantly at any zoom.
+                    if (defs.Buildings[w.DefIndex[i]].IsHeadquarters)
+                    {
+                        var star = Rent(_overlays, ref overlay);
+                        star.sprite = _star;
+                        star.transform.position = new Vector3(x, y, 0f);
+                        float ss = diameter * 0.62f;
+                        star.transform.localScale = new Vector3(ss, ss, 1f);
+                        star.color = Color.Lerp(OwnerColor(w.Owner[i]), Color.white, 0.65f);
+                        star.sortingOrder = 3;
+                    }
                 }
 
                 // Health bar for damaged buildings.
@@ -387,6 +425,55 @@ namespace Petri.Client
             _prevHigh = w.HighWater;
             for (int i = body; i < _bodies.Count; i++) _bodies[i].enabled = false;
             for (int i = overlay; i < _overlays.Count; i++) _overlays[i].enabled = false;
+        }
+
+        /// <summary>Rebuild the territory overlay on a cadence: owner-tinted fill, brighter
+        /// borders, and a shimmer where a border touches an enemy (a live front). Fog-gated:
+        /// unexplored ground stays blank, explored-but-dark ground renders dimmed.</summary>
+        private void UpdateTerritory(SimWorld w)
+        {
+            if (_terrTex == null || Time.time < _terrNext) return;
+            _terrNext = Time.time + TerritoryInterval;
+            int cw = w.TerritoryCellsX, ch = w.TerritoryCellsY;
+            int players = w.Players.Length;
+            // The contested pulse: one shared phase, re-sampled each rebuild (~8 Hz shimmer).
+            float pulse = Mathf.Lerp(0.55f, 0.95f, 0.5f + 0.5f * Mathf.Sin(Time.time * 5f));
+            var clear = new Color32(0, 0, 0, 0);
+
+            for (int y = 0; y < ch; y++)
+            {
+                int row = y * cw;
+                for (int x = 0; x < cw; x++)
+                {
+                    int c = row + x;
+                    byte o = w.Territory[c];
+                    if (o >= players) { _terrPixels[c] = clear; continue; }
+                    float wx = (x * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    float wy = (y * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    if (Vision != null && !Vision.ExploredAt(wx, wy)) { _terrPixels[c] = clear; continue; }
+
+                    bool border = false, contested = false;
+                    if (x > 0 && Check(w, o, w.Territory[c - 1], ref contested)) border = true;
+                    if (x < cw - 1 && Check(w, o, w.Territory[c + 1], ref contested)) border = true;
+                    if (y > 0 && Check(w, o, w.Territory[c - cw], ref contested)) border = true;
+                    if (y < ch - 1 && Check(w, o, w.Territory[c + cw], ref contested)) border = true;
+
+                    var col = OwnerColor(o);
+                    float a = contested ? pulse : border ? 0.8f : 0.35f;
+                    if (Vision != null && !Vision.VisibleAt(wx, wy)) a *= 0.6f; // remembered, not seen
+                    _terrPixels[c] = new Color32((byte)(col.r * 255f), (byte)(col.g * 255f),
+                        (byte)(col.b * 255f), (byte)(a * 255f));
+                }
+            }
+            _terrTex.SetPixels32(_terrPixels);
+            _terrTex.Apply(false);
+
+            static bool Check(SimWorld w, byte owner, byte other, ref bool contested)
+            {
+                if (other == owner) return false;
+                if (other < w.Players.Length && w.AreEnemies(owner, other)) contested = true;
+                return true;
+            }
         }
 
         private void UpdateFog(SimWorld w, DefDatabase defs)
