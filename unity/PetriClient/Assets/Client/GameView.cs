@@ -84,6 +84,12 @@ namespace Petri.Client
         private readonly float[] _frontLabelY = new float[SimConstants.MaxFronts];
         private readonly int[] _frontLabelN = new int[SimConstants.MaxFronts];
 
+        // Live battle line: midpoints of visible enemy-vs-enemy cell contacts, refreshed
+        // with the territory texture. Sparks render here; the minimap blinks them red.
+        private readonly List<Vector3> _combatPoints = new List<Vector3>(256);
+        public IReadOnlyList<Vector3> CombatPoints => _combatPoints;
+        private const int CombatPointCap = 300;
+
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
         private Texture2D _fogTex;
@@ -425,6 +431,7 @@ namespace Petri.Client
                 pr.sortingOrder = 8;
             }
 
+            DrawCombatSparks(ref overlay);
             DrawFrontMarkers(w, ref overlay);
             DrawGhost(w, defs, input);
 
@@ -462,25 +469,36 @@ namespace Petri.Client
             var clear = new Color32(0, 0, 0, 0);
             float pxU = SimWorld.CellCenti / 100f / S; // world units per texture pixel
 
-            // ---- Cell pass: anchor the human player's front labels on border cells.
+            // ---- Cell pass: anchor the human player's front labels on border cells and
+            // collect the live battle line (visible enemy-vs-enemy contact midpoints).
             System.Array.Clear(_frontLabelX, 0, _frontLabelX.Length);
             System.Array.Clear(_frontLabelY, 0, _frontLabelY.Length);
             System.Array.Clear(_frontLabelN, 0, _frontLabelN.Length);
+            _combatPoints.Clear();
+            float half = SimWorld.CellCenti / 200f; // half a cell, world units
             for (int y = 0; y < ch; y++)
             {
                 int row = y * cw;
                 for (int x = 0; x < cw; x++)
                 {
                     int c = row + x;
-                    if (w.Territory[c] != human) continue;
+                    byte o = w.Territory[c];
+                    if (o >= players) continue;
+                    float cx = (x * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    float cy = (y * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    // East and north neighbors: each hostile pair is seen exactly once.
+                    if (x < cw - 1) MaybeCombatPoint(w, o, w.Territory[c + 1], cx + half, cy);
+                    if (y < ch - 1) MaybeCombatPoint(w, o, w.Territory[c + cw], cx, cy + half);
+
+                    if (o != human) continue;
                     bool border = (x > 0 && w.Territory[c - 1] != human)
                         || (x < cw - 1 && w.Territory[c + 1] != human)
                         || (y > 0 && w.Territory[c - cw] != human)
                         || (y < ch - 1 && w.Territory[c + cw] != human);
                     if (!border) continue;
                     int s = w.ScratchCellSector[c];
-                    _frontLabelX[s] += (x * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
-                    _frontLabelY[s] += (y * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    _frontLabelX[s] += cx;
+                    _frontLabelY[s] += cy;
                     _frontLabelN[s]++;
                 }
             }
@@ -559,6 +577,39 @@ namespace Petri.Client
             _terrTex.Apply(false);
         }
 
+        /// <summary>Record a battle-line midpoint where two hostile owners' cells touch
+        /// (fog-gated: only fights the player can currently see).</summary>
+        private void MaybeCombatPoint(SimWorld w, byte a, byte b, float mx, float my)
+        {
+            if (b >= w.Players.Length || !w.AreEnemies(a, b)) return;
+            if (_combatPoints.Count >= CombatPointCap) return;
+            if (Vision != null && !Vision.VisibleAt(mx, my)) return;
+            _combatPoints.Add(new Vector3(mx, my, 0f));
+        }
+
+        /// <summary>Clash sparks riding the battle line: small rotating star/cross bursts
+        /// cycling out of every visible contact point — unmistakable "fighting HERE".</summary>
+        private void DrawCombatSparks(ref int overlay)
+        {
+            int n = _combatPoints.Count;
+            if (n == 0) return;
+            int stride = 1 + n / 120; // cap the on-screen spark count on huge battle lines
+            for (int i = 0; i < n; i += stride)
+            {
+                float phase = (Time.time * 2.0f + i * 0.371f) % 1f;
+                var sr = Rent(_overlays, ref overlay);
+                sr.sprite = (i & 1) == 0 ? _star : _cross;
+                sr.transform.position = _combatPoints[i];
+                float s = 0.35f + 0.5f * phase;
+                sr.transform.localScale = new Vector3(s, s, 1f);
+                sr.transform.rotation = Quaternion.Euler(0f, 0f, i * 47f + Time.time * 120f);
+                var c = Color.Lerp(Color.white, AttackPing, phase);
+                c.a = 0.9f * (1f - phase);
+                sr.color = c;
+                sr.sortingOrder = 4;
+            }
+        }
+
         /// <summary>Add one cell sample's weight to its owner's slot (≤4 distinct owners
         /// in a 2×2 neighborhood; blocked cells are neutral by invariant).</summary>
         private void Accumulate(byte owner, float weight, ref int slots)
@@ -582,9 +633,11 @@ namespace Petri.Client
             {
                 bool pushing = pl.FrontPushX[f] >= 0;
                 bool broken = pl.FrontBrokenTicks[f] > 0;
+                bool engaged = w.ScratchFrontContested[MatchBootstrap.HumanPlayer * SimConstants.MaxFronts + f];
                 Color col = f == selFront ? Color.white
                     : broken ? AttackPing
                     : pushing ? RallyPing
+                    : engaged ? new Color(1f, 0.55f, 0.25f) // combat orange
                     : new Color(0.75f, 0.8f, 0.75f, 0.65f);
                 if (broken) col.a = Mathf.Lerp(0.4f, 1f, 0.5f + 0.5f * Mathf.Sin(Time.time * 8f));
 
@@ -600,6 +653,20 @@ namespace Petri.Client
                         DrawDigit(label % 10, lx + 0.45f, ly, col, ref overlay);
                     }
                     else DrawDigit(label, lx, ly, col, ref overlay);
+
+                    // Battle badge: a pulsing red-orange burst beside any engaged front's
+                    // number, whatever else it is doing.
+                    if (engaged)
+                    {
+                        var badge = Rent(_overlays, ref overlay);
+                        badge.sprite = _star;
+                        badge.transform.position = new Vector3(lx - (label >= 10 ? 1.5f : 1.05f), ly, 0f);
+                        float bs = 0.75f + 0.15f * Mathf.Sin(Time.time * 7f);
+                        badge.transform.localScale = new Vector3(bs, bs, 1f);
+                        badge.color = Color.Lerp(AttackPing, new Color(1f, 0.7f, 0.3f),
+                            0.5f + 0.5f * Mathf.Sin(Time.time * 7f));
+                        badge.sortingOrder = 5;
+                    }
                 }
 
                 if (pushing)

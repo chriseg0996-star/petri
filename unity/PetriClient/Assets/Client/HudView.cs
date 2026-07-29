@@ -304,6 +304,16 @@ namespace Petri.Client
                         Plot(px - 1, py - 1, MiniOwnerColor(w.Owner[i]), 3);
                     }
                 }
+
+                // Battle blips: every visible fight blinks red so the minimap answers
+                // "where is the fighting" at a glance.
+                if (_match.View != null && ((int)(Time.time * 4f) & 1) == 0)
+                {
+                    var fight = new Color32(255, 70, 48, 255);
+                    var pts = _match.View.CombatPoints;
+                    for (int k = 0; k < pts.Count; k++)
+                        Plot((int)pts[k].x, (int)pts[k].y, fight, 2);
+                }
                 _miniTex.SetPixels32(_miniPixels);
                 _miniTex.Apply(false);
             }
@@ -463,8 +473,13 @@ namespace Petri.Client
             {
                 int u = _match.Defs.Units.Length, force = 0;
                 for (int d = 0; d < u; d++) force += pl.Force[sel * u + d];
+                bool engaged = w.ScratchFrontContested[MatchBootstrap.HumanPlayer * SimConstants.MaxFronts + sel];
                 string state = pl.FrontBrokenTicks[sel] > 0 ? "<color=#ff8a80><b>BROKEN</b></color>"
-                    : pl.FrontPushX[sel] >= 0 ? "<color=#ffd94a><b>PUSHING</b></color>" : "holding";
+                    : pl.FrontPushX[sel] >= 0 ? "<color=#ffd94a><b>PUSHING</b></color>"
+                    : engaged ? "" : "holding";
+                if (engaged && pl.FrontBrokenTicks[sel] == 0)
+                    state += state.Length > 0 ? " · <color=#ff8c46><b>IN COMBAT</b></color>"
+                        : "<color=#ff8c46><b>IN COMBAT</b></color>";
                 _sb.Append($"<b>Front {sel + 1}</b> — force <b>{force}</b> · {state}\n");
             }
             else
