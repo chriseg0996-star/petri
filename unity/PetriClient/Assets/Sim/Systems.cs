@@ -152,8 +152,10 @@ namespace Petri.Core
     /// TERRITORY GROWTH: on each growth beat every living organism claims neutral, ownable
     /// cells 4-adjacent to its territory. Fronts with a PUSH order spend budget first,
     /// claiming the candidate cells nearest their push target (directed expansion); the
-    /// remaining budget spreads isotropically via a rotating-offset scan. Deterministic:
-    /// integer math, index-order scans, offsets derived from TickCount only.
+    /// remaining budget grows EVENLY — every claim takes the frontier cell nearest the
+    /// organism's centroid, so the body rounds outward in rings from its starting point
+    /// instead of following the cell scan order. Deterministic: integer math, argmin with
+    /// (distance, index) tie-break.
     /// </summary>
     public static class GrowthSystem
     {
@@ -162,7 +164,6 @@ namespace Petri.Core
             int cells = w.CellCount;
             if (cells == 0) return;
             int cx0 = w.TerritoryCellsX;
-            int start = (int)(((long)(w.TickCount / w.Rules.GrowthBeatTicks) * 7919) % cells);
 
             for (byte p = 0; p < w.Players.Length; p++)
             {
@@ -208,19 +209,32 @@ namespace Petri.Core
                     }
                 }
 
-                // ISOTROPIC PASS: whatever budget remains spreads in all directions.
-                for (int n = 0; n < cells && budget > 0; n++)
+                // EVEN PASS: each remaining claim takes the frontier cell NEAREST the
+                // organism's centroid (geometry ran just before growth this beat), so
+                // the body rounds outward evenly and fills concavities first. Claims
+                // cascade within the beat — a claimed cell's neighbors join the
+                // frontier immediately, so chokepoints don't stall the budget.
+                int centX = w.ScratchCentXCenti[p], centY = w.ScratchCentYCenti[p];
+                while (budget > 0)
                 {
-                    int c = start + n;
-                    if (c >= cells) c -= cells;
-                    if (w.Territory[c] != SimWorld.NeutralOwner || w.TerritoryBlocked[c]) continue;
-                    int x = c % cx0, y = c / cx0;
-                    bool adj = (x > 0 && w.Territory[c - 1] == p)
-                        || (x < cx0 - 1 && w.Territory[c + 1] == p)
-                        || (y > 0 && w.Territory[c - cx0] == p)
-                        || (y < w.TerritoryCellsY - 1 && w.Territory[c + cx0] == p);
-                    if (!adj) continue;
-                    w.Territory[c] = p;
+                    int best = -1;
+                    long bestD = long.MaxValue;
+                    for (int c = 0; c < cells; c++)
+                    {
+                        if (w.Territory[c] != SimWorld.NeutralOwner || w.TerritoryBlocked[c]) continue;
+                        int x = c % cx0, y = c / cx0;
+                        bool adj = (x > 0 && w.Territory[c - 1] == p)
+                            || (x < cx0 - 1 && w.Territory[c + 1] == p)
+                            || (y > 0 && w.Territory[c - cx0] == p)
+                            || (y < w.TerritoryCellsY - 1 && w.Territory[c + cx0] == p);
+                        if (!adj) continue;
+                        w.CellCenterCenti(c, out int ccx, out int ccy);
+                        long dx = ccx - centX, dy = ccy - centY;
+                        long d = dx * dx + dy * dy;
+                        if (d < bestD) { bestD = d; best = c; }
+                    }
+                    if (best < 0) break; // nowhere left to grow
+                    w.Territory[best] = p;
                     budget--;
                 }
             }

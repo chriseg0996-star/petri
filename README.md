@@ -115,4 +115,4 @@ dotnet run --project src/Petri.Runner -- run-match --seed 7 --ticks 20000
 
 All four must pass before and after any change; `determinism` must print PASS for both the
 fresh rerun and the replay, and `run-match` must end with a winner. Balance reference:
-scripted matches decide around tick 4500 (petri-dish), 4700 (capillary), 6100 (agar-plate).
+scripted matches decide around tick 5500 (petri-dish), 5700 (capillary), 5400 (agar-plate).
