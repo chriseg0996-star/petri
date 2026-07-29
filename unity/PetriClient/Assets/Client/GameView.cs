@@ -137,11 +137,11 @@ namespace Petri.Client
             }
 
             // The organisms themselves: a low texture where each pixel is one 2u territory
-            // cell, rendered UNDER walls and entities. Bilinear filtering rounds the cell
-            // edges into soft organic borders for free.
+            // cell, rendered UNDER walls and entities. Point sampling keeps every cell
+            // edge crisp — solid organisms with hard front lines, no blur.
             _terrTex = new Texture2D(world.TerritoryCellsX, world.TerritoryCellsY, TextureFormat.RGBA32, false)
             {
-                filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp,
             };
             _terrPixels = new Color32[world.TerritoryCellsX * world.TerritoryCellsY];
             var terrGo = new GameObject("territory");
@@ -444,8 +444,8 @@ namespace Petri.Client
             int cw = w.TerritoryCellsX, ch = w.TerritoryCellsY;
             int players = w.Players.Length;
             int selFront = _match.Input != null ? _match.Input.SelectedFront : -1;
-            // The contested pulse: one shared phase, re-sampled each rebuild (~8 Hz shimmer).
-            float pulse = Mathf.Lerp(0.55f, 0.95f, 0.5f + 0.5f * Mathf.Sin(Time.time * 5f));
+            // Contested borders glint in BRIGHTNESS only (alpha stays hard and solid).
+            float pulse01 = 0.5f + 0.5f * Mathf.Sin(Time.time * 5f);
             var clear = new Color32(0, 0, 0, 0);
             System.Array.Clear(_frontLabelX, 0, _frontLabelX.Length);
             System.Array.Clear(_frontLabelY, 0, _frontLabelY.Length);
@@ -470,7 +470,21 @@ namespace Petri.Client
                     if (y < ch - 1 && Check(w, o, w.Territory[c + cw], ref contested)) border = true;
 
                     var col = OwnerColor(o);
-                    float a = contested ? pulse : border ? 0.8f : 0.35f;
+                    float a;
+                    if (border)
+                    {
+                        // HARD front line: full-strength owner color, fully opaque; a live
+                        // (enemy-touching) stretch glints brighter without going soft.
+                        if (contested) col = Color.Lerp(col, Color.white, 0.15f + 0.25f * pulse01);
+                        a = 1f;
+                    }
+                    else
+                    {
+                        // Pale, solid interior — clearly the organism's body, lighter than
+                        // its border so the front line pops.
+                        col = Color.Lerp(col, Color.white, 0.4f);
+                        a = 0.6f;
+                    }
                     if (o == MatchBootstrap.HumanPlayer)
                     {
                         if (border)
@@ -484,8 +498,8 @@ namespace Petri.Client
                         if (selFront >= 0 && w.ScratchCellSector[c] == selFront)
                         {
                             // The SELECTED front's whole wedge lifts toward white.
-                            col = Color.Lerp(col, Color.white, 0.45f);
-                            if (a < 0.5f) a = 0.5f;
+                            col = Color.Lerp(col, Color.white, 0.5f);
+                            if (a < 0.75f) a = 0.75f;
                         }
                     }
                     if (Vision != null && !Vision.VisibleAt(wx, wy)) a *= 0.6f; // remembered, not seen
