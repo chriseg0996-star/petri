@@ -73,6 +73,12 @@ namespace Petri.Client
         private float _terrNext;
         private const float TerritoryInterval = 0.12f;
 
+        // Per-front label anchors: the mean of the human organism's border cells in each
+        // sector, refreshed with the territory texture. Labels draw every frame from these.
+        private readonly float[] _frontLabelX = new float[SimConstants.MaxFronts];
+        private readonly float[] _frontLabelY = new float[SimConstants.MaxFronts];
+        private readonly int[] _frontLabelN = new int[SimConstants.MaxFronts];
+
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
         private Texture2D _fogTex;
@@ -410,6 +416,7 @@ namespace Petri.Client
                 pr.sortingOrder = 8;
             }
 
+            DrawFrontMarkers(w, ref overlay);
             DrawGhost(w, defs, input);
 
             // Snapshot for next frame's death detection; disable the pool tails.
@@ -436,9 +443,13 @@ namespace Petri.Client
             _terrNext = Time.time + TerritoryInterval;
             int cw = w.TerritoryCellsX, ch = w.TerritoryCellsY;
             int players = w.Players.Length;
+            int selFront = _match.Input != null ? _match.Input.SelectedFront : -1;
             // The contested pulse: one shared phase, re-sampled each rebuild (~8 Hz shimmer).
             float pulse = Mathf.Lerp(0.55f, 0.95f, 0.5f + 0.5f * Mathf.Sin(Time.time * 5f));
             var clear = new Color32(0, 0, 0, 0);
+            System.Array.Clear(_frontLabelX, 0, _frontLabelX.Length);
+            System.Array.Clear(_frontLabelY, 0, _frontLabelY.Length);
+            System.Array.Clear(_frontLabelN, 0, _frontLabelN.Length);
 
             for (int y = 0; y < ch; y++)
             {
@@ -460,6 +471,23 @@ namespace Petri.Client
 
                     var col = OwnerColor(o);
                     float a = contested ? pulse : border ? 0.8f : 0.35f;
+                    if (o == MatchBootstrap.HumanPlayer)
+                    {
+                        if (border)
+                        {
+                            // Border cells anchor this sector's front label.
+                            int s = w.ScratchCellSector[c];
+                            _frontLabelX[s] += wx;
+                            _frontLabelY[s] += wy;
+                            _frontLabelN[s]++;
+                        }
+                        if (selFront >= 0 && w.ScratchCellSector[c] == selFront)
+                        {
+                            // The SELECTED front's whole wedge lifts toward white.
+                            col = Color.Lerp(col, Color.white, 0.45f);
+                            if (a < 0.5f) a = 0.5f;
+                        }
+                    }
                     if (Vision != null && !Vision.VisibleAt(wx, wy)) a *= 0.6f; // remembered, not seen
                     _terrPixels[c] = new Color32((byte)(col.r * 255f), (byte)(col.g * 255f),
                         (byte)(col.b * 255f), (byte)(a * 255f));
@@ -474,6 +502,61 @@ namespace Petri.Client
                 if (other < w.Players.Length && w.AreEnemies(owner, other)) contested = true;
                 return true;
             }
+        }
+
+        /// <summary>Front number labels on the border plus push-target rings, drawn from the
+        /// overlay pool every frame. White = selected, gold = pushing, red pulse = broken.</summary>
+        private void DrawFrontMarkers(SimWorld w, ref int overlay)
+        {
+            var pl = w.Players[MatchBootstrap.HumanPlayer];
+            if (!pl.Alive) return;
+            int selFront = _match.Input != null ? _match.Input.SelectedFront : -1;
+
+            for (int f = 0; f < pl.FrontCount; f++)
+            {
+                bool pushing = pl.FrontPushX[f] >= 0;
+                bool broken = pl.FrontBrokenTicks[f] > 0;
+                Color col = f == selFront ? Color.white
+                    : broken ? AttackPing
+                    : pushing ? RallyPing
+                    : new Color(0.75f, 0.8f, 0.75f, 0.65f);
+                if (broken) col.a = Mathf.Lerp(0.4f, 1f, 0.5f + 0.5f * Mathf.Sin(Time.time * 8f));
+
+                if (_frontLabelN[f] > 0)
+                {
+                    float lx = _frontLabelX[f] / _frontLabelN[f];
+                    float ly = _frontLabelY[f] / _frontLabelN[f];
+                    // Human-facing fronts are 1-based; two digit sprites cover up to 40.
+                    int label = f + 1;
+                    if (label >= 10)
+                    {
+                        DrawDigit(label / 10, lx - 0.45f, ly, col, ref overlay);
+                        DrawDigit(label % 10, lx + 0.45f, ly, col, ref overlay);
+                    }
+                    else DrawDigit(label, lx, ly, col, ref overlay);
+                }
+
+                if (pushing)
+                {
+                    var ring = Rent(_overlays, ref overlay);
+                    ring.sprite = _thinRing;
+                    ring.transform.position = new Vector3(pl.FrontPushX[f] / 100f, pl.FrontPushY[f] / 100f, 0f);
+                    float s = 1.8f + 0.25f * Mathf.Sin(Time.time * 4f);
+                    ring.transform.localScale = new Vector3(s, s, 1f);
+                    ring.color = f == selFront ? Color.white : RallyPing;
+                    ring.sortingOrder = 5;
+                }
+            }
+        }
+
+        private void DrawDigit(int digit, float x, float y, Color col, ref int overlay)
+        {
+            var d = Rent(_overlays, ref overlay);
+            d.sprite = _digits[digit];
+            d.transform.position = new Vector3(x, y, 0f);
+            d.transform.localScale = new Vector3(1.3f, 1.3f, 1f);
+            d.color = col;
+            d.sortingOrder = 5;
         }
 
         private void UpdateFog(SimWorld w, DefDatabase defs)

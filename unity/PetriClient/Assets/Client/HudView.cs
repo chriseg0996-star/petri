@@ -124,6 +124,7 @@ namespace Petri.Client
             RefreshStats();
             _hotRects.Clear();
             _tooltip = null;
+            DrawPushPath();
             DrawTopBar();
             DrawPanel();
             DrawMinimap();
@@ -350,10 +351,38 @@ namespace Petri.Client
             string hint;
             if (_match.Input != null && _match.Input.PlacingBuilding >= 0)
                 hint = $"<b>Placing {PrettyName(_match.Defs.Buildings[_match.Input.PlacingBuilding].Id)}</b> — left-click to place (own territory only) · right-click / Esc to cancel";
+            else if (_match.Input != null && _match.Input.SelectedFront >= 0)
+                hint = $"<b>Front {_match.Input.SelectedFront + 1} selected</b> — right-click-drag a path to PUSH it · [S] stop · Esc deselect";
             else
-                hint = "L-click select building/node · build from the bottom panel · the organism grows on its own — win at 75% of the dish";
+                hint = "L-click your border to select a FRONT · L-click buildings/nodes to inspect · R-click with a producer selected to rally it · win at 75% of the dish";
             GUI.Label(new Rect(12, Screen.height - 24, 1800, 22), hint, _small);
         }
+
+        // Dotted gold trail under the cursor while sketching a push path; the bright head
+        // marks where the front is being sent.
+        private void DrawPushPath()
+        {
+            var input = _match.Input;
+            if (input == null || !input.RightDragging || input.RightPathScreen.Count == 0) return;
+            const float step = 10f;
+            float carry = 0f;
+            var path = input.RightPathScreen;
+            DrawDot(path[0], 5f);
+            for (int i = 1; i < path.Count; i++)
+            {
+                Vector2 a = path[i - 1], b = path[i];
+                float seg = Vector2.Distance(a, b);
+                if (seg < 1e-3f) continue;
+                for (float d = step - carry; d < seg; d += step)
+                    DrawDot(Vector2.Lerp(a, b, d / seg), 5f);
+                carry = (carry + seg) % step;
+            }
+            DrawDot(path[path.Count - 1], 8f);
+        }
+
+        private void DrawDot(Vector2 p, float sz) =>
+            Tint(new Rect(p.x - sz * 0.5f, Screen.height - p.y - sz * 0.5f, sz, sz),
+                new Color(1f, 0.95f, 0.4f, sz > 6f ? 0.95f : 0.7f));
 
         /// <summary>The persistent bottom panel: organism/selection card on the left, force
         /// table in the middle, build grid (always) plus the selected producer's production
@@ -391,7 +420,20 @@ namespace Petri.Client
             _sb.Append($"Territory <b>{TerritoryPercent(MatchBootstrap.HumanPlayer)}%</b> of the dish (win at 75%)\n");
             _sb.Append($"Workers <b>{pl.WorkerCount}</b> — each speeds growth and harvest\n");
             _sb.Append($"Fronts <b>{pl.FrontCount}</b> border sections\n");
-            _sb.Append("<color=#9fb0a4><i>The organism grows outward on its own; force on the borders holds and takes ground.</i></color>");
+
+            int sel = _match.Input != null ? _match.Input.SelectedFront : -1;
+            if (sel >= 0)
+            {
+                int u = _match.Defs.Units.Length, force = 0;
+                for (int d = 0; d < u; d++) force += pl.Force[sel * u + d];
+                string state = pl.FrontBrokenTicks[sel] > 0 ? "<color=#ff8a80><b>BROKEN</b></color>"
+                    : pl.FrontPushX[sel] >= 0 ? "<color=#ffd94a><b>PUSHING</b></color>" : "holding";
+                _sb.Append($"<b>Front {sel + 1}</b> — force <b>{force}</b> · {state}\n");
+            }
+            else
+            {
+                _sb.Append("<color=#9fb0a4><i>Click your border to select a front; right-click-drag to push it.</i></color>");
+            }
             GUI.Label(new Rect(r.x, y, r.width, r.height - (y - r.y)), _sb.ToString(), _label);
         }
 
@@ -474,8 +516,8 @@ namespace Petri.Client
                     ? $"Mode: <b>Only {PrettyName(defs.Units[w.ProduceOverride[e]].Id)}</b>\n"
                     : "Mode: <b>Auto</b> (composition weights)\n");
                 _sb.Append(w.RallyFront[e] >= 0
-                    ? $"Rally: <b>front {w.RallyFront[e]}</b>\n"
-                    : "Rally: <b>auto</b> (units join the emptiest front)\n");
+                    ? $"Rally: <b>front {w.RallyFront[e] + 1}</b> (right-click to move, [R] to clear)\n"
+                    : "Rally: <b>auto</b> — right-click a sector to pin its output there\n");
             }
             else _sb.Append("Produces nothing\n");
 
