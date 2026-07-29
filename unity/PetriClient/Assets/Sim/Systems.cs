@@ -157,10 +157,6 @@ namespace Petri.Core
     /// </summary>
     public static class GrowthSystem
     {
-        private const int PushCandidateCap = 128;
-        private static readonly int[] _candCell = new int[PushCandidateCap];
-        private static readonly long[] _candDist = new long[PushCandidateCap];
-
         public static void Tick(SimWorld w, DefDatabase defs)
         {
             int cells = w.CellCount;
@@ -181,7 +177,7 @@ namespace Petri.Core
                 {
                     if (pl.FrontPushX[s] < 0) continue;
                     int n = 0;
-                    for (int c = 0; c < cells && n < PushCandidateCap; c++)
+                    for (int c = 0; c < cells && n < SimWorld.CandidateCap; c++)
                     {
                         if (w.Territory[c] != SimWorld.NeutralOwner || w.TerritoryBlocked[c]) continue;
                         int x = c % cx0, y = c / cx0;
@@ -193,26 +189,14 @@ namespace Petri.Core
                         if (!adj) continue;
                         w.CellCenterCenti(c, out int ccx, out int ccy);
                         long dx = ccx - pl.FrontPushX[s], dy = ccy - pl.FrontPushY[s];
-                        _candCell[n] = c;
-                        _candDist[n] = dx * dx + dy * dy;
+                        w.ScratchCandCell[n] = c;
+                        w.ScratchCandDist[n] = dx * dx + dy * dy;
                         n++;
                     }
-                    // Insertion sort by (dist, cellIndex): small n, no allocation, stable.
-                    for (int i = 1; i < n; i++)
-                    {
-                        int cc = _candCell[i]; long dd = _candDist[i];
-                        int j = i - 1;
-                        while (j >= 0 && (_candDist[j] > dd || (_candDist[j] == dd && _candCell[j] > cc)))
-                        {
-                            _candCell[j + 1] = _candCell[j];
-                            _candDist[j + 1] = _candDist[j];
-                            j--;
-                        }
-                        _candCell[j + 1] = cc; _candDist[j + 1] = dd;
-                    }
+                    SortCandidates(w, n);
                     for (int i = 0; i < n && budget > 0; i++)
                     {
-                        w.Territory[_candCell[i]] = p;
+                        w.Territory[w.ScratchCandCell[i]] = p;
                         budget--;
                     }
                     // Push completes when the target cell itself joins the organism.
@@ -239,6 +223,26 @@ namespace Petri.Core
                     w.Territory[c] = p;
                     budget--;
                 }
+            }
+        }
+
+        /// <summary>Insertion-sort the world's candidate workspace by (dist, cellIndex):
+        /// small n, no allocation, stable across platforms.</summary>
+        public static void SortCandidates(SimWorld w, int n)
+        {
+            for (int i = 1; i < n; i++)
+            {
+                int cc = w.ScratchCandCell[i];
+                long dd = w.ScratchCandDist[i];
+                int j = i - 1;
+                while (j >= 0 && (w.ScratchCandDist[j] > dd || (w.ScratchCandDist[j] == dd && w.ScratchCandCell[j] > cc)))
+                {
+                    w.ScratchCandCell[j + 1] = w.ScratchCandCell[j];
+                    w.ScratchCandDist[j + 1] = w.ScratchCandDist[j];
+                    j--;
+                }
+                w.ScratchCandCell[j + 1] = cc;
+                w.ScratchCandDist[j + 1] = dd;
             }
         }
     }
@@ -503,10 +507,6 @@ namespace Petri.Core
             }
         }
 
-        private const int FlipCandidateCap = 64;
-        private static readonly int[] _flipCell = new int[FlipCandidateCap];
-        private static readonly long[] _flipDist = new long[FlipCandidateCap];
-
         /// <summary>Take up to <paramref name="flips"/> enemy cells from front g of player q,
         /// nearest the pusher's target first. A standing building soaks a flip as damage
         /// instead of losing the cell; every flipped cell costs the loser organism health.</summary>
@@ -514,7 +514,7 @@ namespace Petri.Core
         {
             int cells = w.CellCount, cx0 = w.TerritoryCellsX;
             int n = 0;
-            for (int c = 0; c < cells && n < FlipCandidateCap; c++)
+            for (int c = 0; c < cells && n < SimWorld.CandidateCap; c++)
             {
                 if (w.Territory[c] != q || w.ScratchCellSector[c] != g) continue;
                 int x = c % cx0, y = c / cx0;
@@ -525,26 +525,15 @@ namespace Petri.Core
                 if (!adj) continue;
                 w.CellCenterCenti(c, out int ccx, out int ccy);
                 long dx = ccx - pl.FrontPushX[f], dy = ccy - pl.FrontPushY[f];
-                _flipCell[n] = c;
-                _flipDist[n] = dx * dx + dy * dy;
+                w.ScratchCandCell[n] = c;
+                w.ScratchCandDist[n] = dx * dx + dy * dy;
                 n++;
             }
-            for (int i = 1; i < n; i++)
-            {
-                int cc = _flipCell[i]; long dd = _flipDist[i];
-                int j = i - 1;
-                while (j >= 0 && (_flipDist[j] > dd || (_flipDist[j] == dd && _flipCell[j] > cc)))
-                {
-                    _flipCell[j + 1] = _flipCell[j];
-                    _flipDist[j + 1] = _flipDist[j];
-                    j--;
-                }
-                _flipCell[j + 1] = cc; _flipDist[j + 1] = dd;
-            }
+            GrowthSystem.SortCandidates(w, n);
             var foe = w.Players[q];
             for (int i = 0; i < n && flips > 0; )
             {
-                int c = _flipCell[i];
+                int c = w.ScratchCandCell[i];
                 int shield = BuildingOnCell(w, c);
                 if (shield >= 0)
                 {

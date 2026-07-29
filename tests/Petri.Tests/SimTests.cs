@@ -993,6 +993,80 @@ namespace Petri.Tests
         }
     }
 
+    /// <summary>The bot is a pure command source: identical worlds must yield identical
+    /// commands, so bot-driven matches replay bit-identically.</summary>
+    public class BotTests
+    {
+        private static ulong RunBotMatch(int players, int ticks)
+        {
+            var log = new CommandLog();
+            var sim = new Simulation(TestWorlds.TinyDefs(), TestWorlds.TinyMap(), players, 42, log);
+            var bots = new BotController[players];
+            for (byte p = 0; p < players; p++) bots[p] = new BotController(p, 42);
+            var pending = new System.Collections.Generic.List<Command>();
+            for (int t = 0; t < ticks; t++)
+            {
+                for (int p = 0; p < players; p++) bots[p].Think(sim.World, sim.Defs, pending);
+                for (int i = 0; i < pending.Count; i++)
+                {
+                    var c = pending[i];
+                    c.Tick = sim.TickCount;
+                    log.Add(c);
+                }
+                pending.Clear();
+                sim.Tick();
+            }
+            return sim.StateHash();
+        }
+
+        [Fact]
+        public void BotMirrorMatchIsDeterministic()
+        {
+            Assert.Equal(RunBotMatch(2, 3000), RunBotMatch(2, 3000));
+        }
+
+        [Fact]
+        public void EightPlayerFreeForAllIsDeterministic()
+        {
+            Assert.Equal(RunBotMatch(8, 2000), RunBotMatch(8, 2000));
+        }
+
+        [Fact]
+        public void BotActuallyBuildsAndFights()
+        {
+            var log = new CommandLog();
+            var sim = new Simulation(TestWorlds.TinyDefs(), TestWorlds.TinyMap(), 2, 42, log);
+            var w = sim.World;
+            var bots = new[] { new BotController(0, 42), new BotController(1, 42) };
+            var pending = new System.Collections.Generic.List<Command>();
+            for (int t = 0; t < 6000; t++)
+            {
+                for (int p = 0; p < 2; p++) bots[p].Think(w, sim.Defs, pending);
+                for (int i = 0; i < pending.Count; i++)
+                {
+                    var c = pending[i];
+                    c.Tick = sim.TickCount;
+                    log.Add(c);
+                }
+                pending.Clear();
+                sim.Tick();
+            }
+            // The bots must have expanded their bases beyond the starting nucleus...
+            int extraBuildings = 0;
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Building && !sim.Defs.Buildings[w.DefIndex[i]].IsHeadquarters)
+                    extraBuildings++;
+            Assert.True(extraBuildings > 0, "bots never constructed anything");
+            // ...and the organisms must have met and fought (pushes leave hashed traces:
+            // kills pay evo, flips and overflow fire drain health, or someone is dead).
+            bool fought = false;
+            for (int p = 0; p < 2 && !fought; p++)
+                fought = w.Players[p].EvoPoints > 0 || !w.Players[p].Alive
+                    || w.Players[p].OrganismHealth < HealthSystem.MaxOf(w, sim.Defs, (byte)p);
+            Assert.True(fought, "6000 ticks passed without any combat consequence");
+        }
+    }
+
     /// <summary>Validates the shipped JSON dataset actually loads and is internally consistent.</summary>
     public class DataTests
     {

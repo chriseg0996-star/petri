@@ -81,6 +81,12 @@ namespace Petri.Core
         public readonly int[] ScratchFrontMelee;      // frozen pre-beat stats [player * MaxFronts]
         public readonly int[] ScratchFrontRanged;
         public readonly int[] ScratchFrontHold;
+        // Candidate-cell workspace shared by growth's push pass and combat's flip pass
+        // (they run sequentially within a tick). PER-WORLD, never static: two sims ticking
+        // in the same process (tests, future replays) must not share mutable scratch.
+        public const int CandidateCap = 128;
+        public readonly int[] ScratchCandCell = new int[CandidateCap];
+        public readonly long[] ScratchCandDist = new long[CandidateCap];
 
         // Immovable terrain from the map (walls/rocks). Static for the whole match and
         // identical on every peer (map data, covered by DefsHash) — deliberately NOT hashed
