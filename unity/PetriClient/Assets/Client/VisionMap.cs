@@ -25,18 +25,25 @@ namespace Petri.Client
             _explored = new byte[CellsX * CellsY];
         }
 
-        /// <summary>Recompute current visibility from every entity the player's TEAM owns —
-        /// allies share vision.</summary>
+        /// <summary>Recompute current visibility: the organism SEES from its territory —
+        /// every cell the player's team owns stamps a small vision circle (the border
+        /// effectively projects a short sight margin) — plus team buildings.</summary>
         public void Rebuild(SimWorld w, DefDatabase defs, byte player)
         {
             System.Array.Clear(_visible, 0, _visible.Length);
+            float margin = w.Rules.UnitVisionRangeCenti / 100f * 0.5f;
+            for (int c = 0; c < w.Territory.Length; c++)
+            {
+                byte o = w.Territory[c];
+                if (o >= w.Players.Length || !w.IsFriendly(player, o)) continue;
+                w.CellCenterCenti(c, out int ccx, out int ccy);
+                StampCircle(ccx / 100f, ccy / 100f, margin);
+            }
             for (int i = 0; i < w.HighWater; i++)
             {
-                bool unit = w.Kind[i] == EntityKind.Unit;
-                if (!unit && w.Kind[i] != EntityKind.Building) continue;
-                if (!w.IsFriendly(player, w.Owner[i])) continue;
-                int rangeCenti = unit ? w.Rules.UnitVisionRangeCenti : w.Rules.BuildingVisionRangeCenti;
-                StampCircle(w.Pos[i].X.Raw / (float)Fix.OneRaw, w.Pos[i].Y.Raw / (float)Fix.OneRaw, rangeCenti / 100f);
+                if (w.Kind[i] != EntityKind.Building || !w.IsFriendly(player, w.Owner[i])) continue;
+                StampCircle(w.Pos[i].X.Raw / (float)Fix.OneRaw, w.Pos[i].Y.Raw / (float)Fix.OneRaw,
+                    w.Rules.BuildingVisionRangeCenti / 100f);
             }
         }
 

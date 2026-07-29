@@ -3,18 +3,9 @@ namespace Petri.Core
     public enum EntityKind : byte
     {
         None = 0,
-        Unit = 1,
+        Unit = 1,     // retired kind: no unit entities exist post-conversion (value reserved)
         Building = 2,
-        Node = 3, // neutral resource node
-    }
-
-    /// <summary>A landed hit this tick (attacker → target). Transient view-feed: cleared at
-    /// the start of every tick, never hashed — a pure function of the tick, identical on all
-    /// peers, consumed by the client to spawn projectile/impact effects.</summary>
-    public struct AttackEvent
-    {
-        public int Attacker;
-        public int Target;
+        Node = 3,     // neutral resource node
     }
 
     public sealed class PlayerState
@@ -22,14 +13,13 @@ namespace Petri.Core
         public bool Alive;
         public byte Team;       // players sharing a team are allies; different teams are enemies
         public long Food;
-        public long Minerals;   // secondary resource, mined from mineral nodes; spent on prongs
-        public long EvoPoints;  // third resource — earned ONLY by killing enemy units, never mined
+        public long Minerals;   // secondary resource, harvested from mineral nodes
+        public long EvoPoints;  // third resource — earned ONLY by front-combat kills
         public int[] ProductionWeights = System.Array.Empty<int>(); // per unit dense index
-        public int SupplyPriority = 50; // 0 = all workers keep the core; 100 = max caravans to the front
-        public byte[] UpgradeLevels = System.Array.Empty<byte>();   // per upgrade dense index, 0/1
+        public byte[] UpgradeLevels = System.Array.Empty<byte>();   // retained data; systems deferred
 
         // ---- SUPERORGANISM state (all hashed; zeroed on elimination).
-        public int WorkerCount;            // workers are a count, not entities (post-cutover)
+        public int WorkerCount;            // workers are a count, not entities
         public byte FrontCount;            // K, one of SimConstants.FrontCounts
         public int OrganismHealth;         // the organism's shared health pool
         public int[] Force = System.Array.Empty<int>();          // [MaxFronts * unitDefCount]
@@ -40,10 +30,9 @@ namespace Petri.Core
     }
 
     /// <summary>
-    /// The entire mutable match state, structure-of-arrays, fixed capacity. Everything here
-    /// (except the Scratch* buffers) is hashed by Simulation.StateHash and MUST be
-    /// re-initialized in Spawn — un-reset state leaks across entity-index reuse and
-    /// desyncs lockstep peers.
+    /// The entire mutable match state. Everything here (except the Scratch* buffers and the
+    /// static terrain) is hashed by Simulation.StateHash and MUST be re-initialized in Spawn
+    /// or canonicalized by Eliminate — un-reset state desyncs lockstep peers.
     /// </summary>
     public sealed class SimWorld
     {
@@ -59,78 +48,26 @@ namespace Petri.Core
 
         public readonly PlayerState[] Players;
 
+        // Entities: buildings and resource nodes only (units are per-front counts).
         public readonly EntityKind[] Kind;
         public readonly short[] DefIndex;
         public readonly byte[] Owner;
         public readonly FixVec2[] Pos;
         public readonly int[] Hp;
-        public readonly FixVec2[] MoveTarget;
-        public readonly bool[] HasMoveOrder;
-        public readonly bool[] AttackMove;      // unit: move to MoveTarget but divert to engage enemies
-        public readonly byte[] QueueCount;      // unit: shift-queued orders waiting behind the active one
-        public readonly byte[] QueueKind;       // [entity * MaxOrderQueue + q]: SimConstants.Order*
-        public readonly FixVec2[] QueuePos;     // [entity * MaxOrderQueue + q]: queued destination
-        public readonly int[] AttackCooldown;
-        public readonly int[] Carry;            // worker: food carried
-        public readonly int[] GatherTimer;      // worker: ticks into current gather cycle
-        public readonly int[] WorkNode;         // worker: entity index of assigned node, -1 none
         public readonly int[] ProduceProgress;  // building: ticks into current production
         public readonly short[] ProduceChoice;  // building: unit dense index in production, -1 idle
         public readonly short[] ProduceOverride; // building: player-forced unit choice, -1 = auto (weights)
         public readonly bool[] ProducePaused;   // building: production halted by the player
-        public readonly bool[] HasRally;        // building: produced units go to the rally point
-        public readonly FixVec2[] RallyPoint;   // building: rally target (valid when HasRally)
-        public readonly int[] ConstructionRemaining; // building: worker-ticks left, 0 = operational
-        public readonly int[] BuildTask;        // worker: entity index of construction site, -1 none
+        public readonly int[] ConstructionRemaining; // building: work units left, 0 = operational
         public readonly int[] NodeFood;         // node: resource amount remaining (food OR minerals)
         public readonly bool[] NodeMineral;     // node: true = yields minerals, false = nutrients
-        public readonly bool[] CarryMineral;    // worker: the carried load is minerals (routes deposit)
-        public readonly int[] SupplyTicks;      // unit: grace reservoir; refills inside friendly
-                                                //   supply, drains outside; 0 = unsupplied debuff
-        public readonly byte[] Tier;            // supply cache: upgrade level (0 = base) — doubles
-                                                //   stock/HP, halves drain, >= 1 arms the cache
-        public readonly int[] DepotStock;       // supply building: food on hand; dry = supplies nothing
-        public readonly int[] CaravanCache;     // worker: cache it's hauling food to, -1 none
-        public readonly byte[] Dial;            // per-entity 0..100 tuning dial (UI slider); reserved
-                                                //   for future per-entity modifiers, hashed already
-        public readonly FixVec2[] Facing;       // unit body facing (directional damage reads it)
         public readonly short[] RallyFront;     // building: front its produced units join, -1 = auto
         public readonly int[] Generation;       // per-slot version, bumped each Spawn — (index,gen)
-                                                //   is a stable identity the UI uses for control groups
+                                                //   is a stable identity the UI uses
         public int HighWater;
-
-        // Transient per-tick view feed (NOT hashed; cleared each tick by Simulation.Tick).
-        public readonly System.Collections.Generic.List<AttackEvent> AttackEvents =
-            new System.Collections.Generic.List<AttackEvent>(64);
-
-        // Spatial hash grid (derived, rebuilt within each tick; NOT hashed): 4-unit cells,
-        // intrusive linked lists via GridHead/GridNext. Powers collision and combat range
-        // queries — the difference between O(n²) and O(n·k) on the road to 8k units.
-        public const int GridShift = Fix.FracBits + 2; // 4-unit cells (power of two)
-        public readonly int GridCellsX;
-        public readonly int GridCellsY;
-        public readonly int[] GridHead;
-        public readonly int[] GridNext;
-        public Fix MaxInteractRadius = Fix.FromInt(2); // largest entity radius (set by MatchSetup)
 
         // Derived per-tick scratch (NOT hashed, never carries state across ticks).
         public readonly int[] ScratchUnitCounts;
-        public readonly bool[] ScratchConnected; // per-building: linked to an HQ this tick
-        public readonly int[] ScratchBuilders;  // per-site: workers in build reach this tick
-        // Per-tick index lists (ascending, so scans keep their lowest-index tie-breaks) that
-        // keep hot loops off the full entity range — the difference between O(units × entities)
-        // and O(units × depots) as armies grow.
-        public readonly int[] ScratchDepots;    // connected supply buildings
-        public readonly int[] ScratchNodes;     // live resource nodes
-        public readonly int[] ScratchDropoffs;  // finished HQs + hub prongs (any owner)
-        public readonly int[] ScratchWorkers;   // worker units (any owner)
-        public readonly int[] ScratchCaches;    // finished non-HQ supply buildings
-        // Per-player flat attack bonus from standing AttackBonus structures. Derived: recomputed
-        // every combat tick from hashed building state, so it stays out of StateHash.
-        public readonly int[] ScratchAttackBonus;
-        public int ScratchNodeCount, ScratchDropoffCount, ScratchWorkerCount, ScratchCacheCount;
-        public readonly int[] ScratchQueue;     // BFS queue for SupplySystem; leader list for LeaderAuraSystem
-        public readonly bool[] ScratchLeaderAura; // unit: inside a friendly leader's aura this tick
         public readonly bool[] ScratchFrontContested; // [player * MaxFronts]: sector borders an enemy this beat
         public byte[] ScratchCellSector = System.Array.Empty<byte>(); // owned cell → sector under its owner
         public readonly long[] ScratchCentSumX, ScratchCentSumY; // per-player centroid accumulation
@@ -139,8 +76,8 @@ namespace Petri.Core
 
         // Immovable terrain from the map (walls/rocks). Static for the whole match and
         // identical on every peer (map data, covered by DefsHash) — deliberately NOT hashed
-        // and never mutated. Units are pushed out by CollisionSystem; buildings refuse to
-        // stand on them.
+        // and never mutated. Territory can never claim blocked cells; buildings refuse to
+        // stand on walls.
         public FixVec2[] WallPos = System.Array.Empty<FixVec2>();
         public Fix[] WallRadius = System.Array.Empty<Fix>();
 
@@ -189,33 +126,13 @@ namespace Petri.Core
             Owner = new byte[cap];
             Pos = new FixVec2[cap];
             Hp = new int[cap];
-            MoveTarget = new FixVec2[cap];
-            HasMoveOrder = new bool[cap];
-            AttackMove = new bool[cap];
-            QueueCount = new byte[cap];
-            QueueKind = new byte[cap * SimConstants.MaxOrderQueue];
-            QueuePos = new FixVec2[cap * SimConstants.MaxOrderQueue];
-            AttackCooldown = new int[cap];
-            Carry = new int[cap];
-            GatherTimer = new int[cap];
-            WorkNode = new int[cap];
             ProduceProgress = new int[cap];
             ProduceChoice = new short[cap];
             ProduceOverride = new short[cap];
             ProducePaused = new bool[cap];
-            HasRally = new bool[cap];
-            RallyPoint = new FixVec2[cap];
             ConstructionRemaining = new int[cap];
-            BuildTask = new int[cap];
             NodeFood = new int[cap];
             NodeMineral = new bool[cap];
-            CarryMineral = new bool[cap];
-            SupplyTicks = new int[cap];
-            Tier = new byte[cap];
-            DepotStock = new int[cap];
-            CaravanCache = new int[cap];
-            Dial = new byte[cap];
-            Facing = new FixVec2[cap];
             RallyFront = new short[cap];
             Generation = new int[cap];
             ScratchUnitCounts = new int[playerCount * unitDefCount];
@@ -225,23 +142,6 @@ namespace Petri.Core
             ScratchCentCount = new int[playerCount];
             ScratchCentXCenti = new int[playerCount];
             ScratchCentYCenti = new int[playerCount];
-            GridCellsX = System.Math.Max(1, (int)(mapWidth.Raw >> GridShift) + 1);
-            GridCellsY = System.Math.Max(1, (int)(mapHeight.Raw >> GridShift) + 1);
-            GridHead = new int[GridCellsX * GridCellsY];
-            GridNext = new int[cap];
-            for (int c = 0; c < GridHead.Length; c++) GridHead[c] = -1; // empty until first rebuild
-            for (int i = 0; i < cap; i++) GridNext[i] = -1;
-
-            ScratchConnected = new bool[cap];
-            ScratchBuilders = new int[cap];
-            ScratchDepots = new int[cap];
-            ScratchNodes = new int[cap];
-            ScratchDropoffs = new int[cap];
-            ScratchWorkers = new int[cap];
-            ScratchCaches = new int[cap];
-            ScratchAttackBonus = new int[playerCount];
-            ScratchQueue = new int[cap];
-            ScratchLeaderAura = new bool[cap];
 
             Players = new PlayerState[playerCount];
             for (int p = 0; p < playerCount; p++)
@@ -278,31 +178,13 @@ namespace Petri.Core
                 Owner[i] = owner;
                 Pos[i] = pos;
                 Hp[i] = hp;
-                MoveTarget[i] = pos;
-                HasMoveOrder[i] = false;
-                AttackMove[i] = false;
-                QueueCount[i] = 0; // queue entries beyond the count are never read or hashed
-                AttackCooldown[i] = 0;
-                Carry[i] = 0;
-                GatherTimer[i] = 0;
-                WorkNode[i] = -1;
                 ProduceProgress[i] = 0;
                 ProduceChoice[i] = -1;
                 ProduceOverride[i] = -1;
                 ProducePaused[i] = false;
-                HasRally[i] = false;
-                RallyPoint[i] = pos;
                 ConstructionRemaining[i] = 0;
-                BuildTask[i] = -1;
                 NodeFood[i] = 0;
                 NodeMineral[i] = false;
-                CarryMineral[i] = false;
-                SupplyTicks[i] = Rules.SupplyGraceTicks; // fresh units start fully supplied
-                Tier[i] = 0;
-                DepotStock[i] = 0; // depots start empty (MatchSetup fills starting buildings)
-                CaravanCache[i] = -1;
-                Dial[i] = 50;
-                Facing[i] = new FixVec2(Fix.One, Fix.Zero);
                 RallyFront[i] = -1;
                 Generation[i]++; // new occupant of this slot — never reset, only advances
                 if (i >= HighWater) HighWater = i + 1;
@@ -313,25 +195,32 @@ namespace Petri.Core
 
         public void Despawn(int i) => Kind[i] = EntityKind.None;
 
-        /// <summary>Re-bucket every live entity. Called by systems whose queries need fresh
-        /// positions; deterministic (ascending-index insertion, fixed cell order).</summary>
-        public void RebuildGrid()
+        /// <summary>
+        /// Remove a player from the game with a CANONICAL post-elimination state: every
+        /// owned entity despawns, every owned cell reverts to neutral, and the whole
+        /// superorganism block zeroes — identical on every peer regardless of how the
+        /// elimination happened (health, nucleus loss, or territory victory).
+        /// </summary>
+        public void Eliminate(byte p)
         {
-            for (int c = 0; c < GridHead.Length; c++) GridHead[c] = -1;
+            var pl = Players[p];
+            pl.Alive = false;
             for (int i = 0; i < HighWater; i++)
+                if (Kind[i] != EntityKind.None && Kind[i] != EntityKind.Node && Owner[i] == p)
+                    Despawn(i);
+            for (int c = 0; c < Territory.Length; c++)
+                if (Territory[c] == p) Territory[c] = NeutralOwner;
+            pl.WorkerCount = 0;
+            pl.OrganismHealth = 0;
+            for (int k = 0; k < pl.Force.Length; k++) pl.Force[k] = 0;
+            for (int f = 0; f < SimConstants.MaxFronts; f++)
             {
-                if (Kind[i] == EntityKind.None) continue;
-                int cell = GridCellOf(Pos[i]);
-                GridNext[i] = GridHead[cell];
-                GridHead[cell] = i;
+                pl.FrontDamage[f] = 0;
+                pl.FrontBrokenTicks[f] = 0;
+                pl.FrontPushX[f] = -1;
+                pl.FrontPushY[f] = -1;
             }
         }
-
-        public int GridCellOf(FixVec2 p) =>
-            GridClampY((int)(p.Y.Raw >> GridShift)) * GridCellsX + GridClampX((int)(p.X.Raw >> GridShift));
-
-        public int GridClampX(int cx) => cx < 0 ? 0 : (cx >= GridCellsX ? GridCellsX - 1 : cx);
-        public int GridClampY(int cy) => cy < 0 ? 0 : (cy >= GridCellsY ? GridCellsY - 1 : cy);
 
         /// <summary>
         /// THE hostility rule: two owners are enemies only when both are real players on
@@ -351,20 +240,5 @@ namespace Petri.Core
 
         public FixVec2 ClampToMap(FixVec2 p) =>
             new FixVec2(Fix.Clamp(p.X, Fix.Zero, MapWidth), Fix.Clamp(p.Y, Fix.Zero, MapHeight));
-
-        // Deterministic 8-direction ring used for spawn placement and zero-distance separation.
-        private static readonly FixVec2[] Ring =
-        {
-            new FixVec2(Fix.One, Fix.Zero),
-            new FixVec2(Fix.Ratio(7, 10), Fix.Ratio(7, 10)),
-            new FixVec2(Fix.Zero, Fix.One),
-            new FixVec2(Fix.Ratio(-7, 10), Fix.Ratio(7, 10)),
-            new FixVec2(-Fix.One, Fix.Zero),
-            new FixVec2(Fix.Ratio(-7, 10), Fix.Ratio(-7, 10)),
-            new FixVec2(Fix.Zero, -Fix.One),
-            new FixVec2(Fix.Ratio(7, 10), Fix.Ratio(-7, 10)),
-        };
-
-        public static FixVec2 RingDir(int index) => Ring[index & 7];
     }
 }

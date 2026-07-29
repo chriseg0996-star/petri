@@ -2,17 +2,10 @@
   "maxEntities": 16384, "startingFood": 5200, "startingWorkers": 6, "nodeRadiusCenti": 60,
   "growthBeatTicks": 4, "growthBasePerBeat": 2, "growthWorkerDivisor": 3, "startRadiusCells": 3,
   "defaultFrontCount": 4, "redeploySpeedDivisor": 100,
-  "leaderAuraBonusNum": 5, "leaderAuraBonusDen": 4, "leaderAuraRadiusCenti": 600,
-  "frontArcCosNum": 1, "frontArcCosDen": 2, "rearArcCosNum": 1, "rearArcCosDen": 2,
-  "sideDamageNum": 5, "sideDamageDen": 4, "rearDamageNum": 3, "rearDamageDen": 2,
-  "supplyRadiusCenti": 1800, "supplyLinkRangeCenti": 3000, "supplyGraceTicks": 600, "supplyDrainTicks": 200,
-  "unsuppliedDamageNum": 1, "unsuppliedDamageDen": 2,
-  "cacheMaxTier": 3, "cacheUpgradeFoodCost": 100,
-  "cacheAttackDamage": 45, "cacheAttackRangeCenti": 600, "cacheAttackCooldownTicks": 30, "cacheProjectileSpeedCenti": 1400,
+  "slowBeatTicks": 20, "harvestBasePerBeat": 4, "harvestPerWorker": 2, "harvestNodeCapPerBeat": 25,
   "unitVisionRangeCenti": 1400, "buildingVisionRangeCenti": 2000,
   "hubBuildRate": 3,
   "startingMinerals": 500,
   "killBountyNum": 1, "killBountyDen": 10,
-  "collisionBlockRatioNum": 2, "collisionBlockRatioDen": 1,
   "evoPerKill": 1
 }

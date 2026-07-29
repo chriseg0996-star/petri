@@ -11,13 +11,6 @@ namespace Petri.Core
         // step K through this ladder (arrow buttons). MaxFronts sizes every per-front array.
         public const int MaxFronts = 40;
         public static readonly int[] FrontCounts = { 4, 6, 8, 12, 20, 40 };
-
-        // Shift-queued orders: waypoints held per unit, started one by one as each order
-        // completes. Kinds mirror the command that was queued.
-        // Byte 3 is RESERVED (was OrderFormationMove) — old logs may carry it.
-        public const int MaxOrderQueue = 16;
-        public const byte OrderMove = 1;
-        public const byte OrderAttackMove = 2;
     }
 
     /// <summary>Global match rules, loaded from data/rules.json. Integers only.</summary>
@@ -35,63 +28,27 @@ namespace Petri.Core
         public int StartRadiusCells = 3;   // starting blob radius around the spawn cell
         public int DefaultFrontCount = 4;  // organisms start with four fronts (E/N/W/S)
         public int RedeploySpeedDivisor = 100; // per-def transfers/beat = max(1, moveSpeed/this)
-        // The leader's command aura: friendly units within the radius of a live same-owner
-        // leader deal Num/Den damage (5/4 = +25%). The bonus does not stack.
-        public int LeaderAuraBonusNum = 5;
-        public int LeaderAuraBonusDen = 4;
-        public int LeaderAuraRadiusCenti = 600;
-        // Directional combat: units hit from outside their front arc take extra damage.
-        // Arc boundaries are cosines as rationals (1/2 = ±60° cones front and rear).
-        public int FrontArcCosNum = 1;
-        public int FrontArcCosDen = 2;
-        public int RearArcCosNum = 1;
-        public int RearArcCosDen = 2;
-        public int SideDamageNum = 5;  // 5/4 = +25% from the flanks
-        public int SideDamageDen = 4;
-        public int RearDamageNum = 3;  // 3/2 = +50% from behind
-        public int RearDamageDen = 2;
-        // LOGISTICS: supply buildings project supplyRadius while CONNECTED to an HQ through a
-        // chain of supply buildings each within linkRange of the next — the chain is the
-        // raidable supply line. Units carry a grace reservoir that drains outside supply;
-        // at zero they fight at Num/Den damage until resupplied.
-        public int SupplyRadiusCenti = 1800;
-        public int SupplyLinkRangeCenti = 3000;
-        public int SupplyGraceTicks = 600;
-        public int UnsuppliedDamageNum = 1;
-        public int UnsuppliedDamageDen = 2;
-        // Each supplied unit consumes 1 food from its covering depot every this many ticks.
-        public int SupplyDrainTicks = 200;
-        // CACHE TIERS: each upgrade of a supply cache doubles its stock capacity and max HP
-        // and halves per-unit drain (the interval doubles); Tier >= 1 also arms the cache
-        // with a ranged shot. Upgrade cost doubles per tier already bought.
-        public int CacheMaxTier = 3;
-        public int CacheUpgradeFoodCost = 100;
-        public int CacheAttackDamage = 6;
-        public int CacheAttackRangeCenti = 600;
-        public int CacheAttackCooldownTicks = 30;
-        public int CacheProjectileSpeedCenti = 1400; // visual-only: shot dot speed
-        // VISION (fog of war): how far units/buildings see. The fog itself is client-side
-        // (derived from positions, never fed back into the sim), but the radii are shared
-        // data so future scouting features and honest bots read the same numbers.
+        // HARVEST: nodes inside your territory are mined passively each slow beat; workers
+        // scale the rate. Nodes cap what they yield per beat so fields last.
+        public int SlowBeatTicks = 20;
+        public int HarvestBasePerBeat = 4;
+        public int HarvestPerWorker = 2;
+        public int HarvestNodeCapPerBeat = 25;
+        // VISION (fog of war): client-side only; the radii are shared data so honest bots
+        // and future features read the same numbers.
         public int UnitVisionRangeCenti = 1400;
         public int BuildingVisionRangeCenti = 2000;
-        // Hub-built prongs (tech-path buildings) self-construct at this many work units/tick
-        // (construction is 3× BuildTimeTicks work units, so rate 3 finishes in BuildTimeTicks).
+        // Buildings self-construct at this many work units/tick (construction is 3×
+        // BuildTimeTicks work units, so rate 3 finishes in BuildTimeTicks).
         public int HubBuildRate = 3;
-        // Minerals: the secondary resource, mined from mineral nodes; spent on evolution prongs.
+        // Minerals: the secondary resource, mined from mineral nodes.
         public int StartingMinerals = 0;
-        // KILL BOUNTY: whoever lands the killing blow on an enemy unit banks this fraction of
-        // the victim's nutrient cost (default 1/10 = 10%). One integer floor at the award.
+        // KILL BOUNTY: front kills bank this fraction of the victim's nutrient cost.
         public int KillBountyNum = 1;
         public int KillBountyDen = 10;
-        // EVOLUTIONARY POINTS: banked per enemy unit slain and by no other means — the only
-        // resource you cannot gather, so evolution is paid for in blood.
+        // EVOLUTIONARY POINTS: banked per enemy unit slain in front combat and by no other
+        // means — the only resource you cannot gather.
         public int EvoPerKill = 1;
-        // BODY BLOCKING (opposing teams only): a unit's shove-weight is radius × maxHp. When one
-        // body outweighs the other by this ratio it is immovable to it and the lighter unit takes
-        // the whole separation — big tough units wall smaller enemies out instead of sliding.
-        public int CollisionBlockRatioNum = 2;
-        public int CollisionBlockRatioDen = 1;
     }
 
     /// <summary>

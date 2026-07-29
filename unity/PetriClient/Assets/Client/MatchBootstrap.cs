@@ -122,7 +122,6 @@ namespace Petri.Client
                         _bots[p].Think(Sim.World, Defs, _pending); // commands, Player pre-stamped
                 FlushPending();
                 Sim.Tick();
-                DispatchAttackFx();
                 _accumulator -= TickSeconds;
                 steps++;
             }
@@ -149,15 +148,6 @@ namespace Petri.Client
             c.Tick = Sim.TickCount;
             c.Player = HumanPlayer;
             _pending.Add(c);
-        }
-
-        /// <summary>Feed this tick's landed hits to the view (ranged shots become projectiles).</summary>
-        private void DispatchAttackFx()
-        {
-            if (View == null) return;
-            var events = Sim.World.AttackEvents;
-            for (int k = 0; k < events.Count; k++)
-                View.SpawnAttackFx(events[k].Attacker, events[k].Target);
         }
 
         private void FlushPending()

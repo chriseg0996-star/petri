@@ -21,16 +21,11 @@ namespace Petri.Client
             public int maxEntities, startingFood, startingWorkers, nodeRadiusCenti;
             public int growthBeatTicks, growthBasePerBeat, growthWorkerDivisor, startRadiusCells;
             public int defaultFrontCount, redeploySpeedDivisor;
-            public int leaderAuraBonusNum, leaderAuraBonusDen, leaderAuraRadiusCenti;
-            public int frontArcCosNum, frontArcCosDen, rearArcCosNum, rearArcCosDen;
-            public int sideDamageNum, sideDamageDen, rearDamageNum, rearDamageDen;
-            public int supplyRadiusCenti, supplyLinkRangeCenti, supplyGraceTicks, unsuppliedDamageNum, unsuppliedDamageDen, supplyDrainTicks;
-            public int cacheMaxTier, cacheUpgradeFoodCost, cacheAttackDamage, cacheAttackRangeCenti, cacheAttackCooldownTicks, cacheProjectileSpeedCenti;
+            public int slowBeatTicks, harvestBasePerBeat, harvestPerWorker, harvestNodeCapPerBeat;
             public int unitVisionRangeCenti, buildingVisionRangeCenti;
             public int hubBuildRate;
             public int startingMinerals;
             public int killBountyNum, killBountyDen;
-            public int collisionBlockRatioNum, collisionBlockRatioDen;
             public int evoPerKill;
         }
 
@@ -142,37 +137,16 @@ namespace Petri.Client
             StartRadiusCells = d.startRadiusCells > 0 ? d.startRadiusCells : 3,
             DefaultFrontCount = d.defaultFrontCount > 0 ? d.defaultFrontCount : 4,
             RedeploySpeedDivisor = d.redeploySpeedDivisor > 0 ? d.redeploySpeedDivisor : 100,
-            LeaderAuraBonusNum = d.leaderAuraBonusNum > 0 ? d.leaderAuraBonusNum : 5,
-            LeaderAuraBonusDen = d.leaderAuraBonusDen > 0 ? d.leaderAuraBonusDen : 4,
-            LeaderAuraRadiusCenti = d.leaderAuraRadiusCenti > 0 ? d.leaderAuraRadiusCenti : 600,
-            FrontArcCosNum = d.frontArcCosNum > 0 ? d.frontArcCosNum : 1,
-            FrontArcCosDen = d.frontArcCosDen > 0 ? d.frontArcCosDen : 2,
-            RearArcCosNum = d.rearArcCosNum > 0 ? d.rearArcCosNum : 1,
-            RearArcCosDen = d.rearArcCosDen > 0 ? d.rearArcCosDen : 2,
-            SideDamageNum = d.sideDamageNum > 0 ? d.sideDamageNum : 5,
-            SideDamageDen = d.sideDamageDen > 0 ? d.sideDamageDen : 4,
-            RearDamageNum = d.rearDamageNum > 0 ? d.rearDamageNum : 3,
-            RearDamageDen = d.rearDamageDen > 0 ? d.rearDamageDen : 2,
-            SupplyRadiusCenti = d.supplyRadiusCenti > 0 ? d.supplyRadiusCenti : 1800,
-            SupplyLinkRangeCenti = d.supplyLinkRangeCenti > 0 ? d.supplyLinkRangeCenti : 3000,
-            SupplyGraceTicks = d.supplyGraceTicks > 0 ? d.supplyGraceTicks : 600,
-            UnsuppliedDamageNum = d.unsuppliedDamageNum > 0 ? d.unsuppliedDamageNum : 1,
-            UnsuppliedDamageDen = d.unsuppliedDamageDen > 0 ? d.unsuppliedDamageDen : 2,
-            SupplyDrainTicks = d.supplyDrainTicks > 0 ? d.supplyDrainTicks : 200,
-            CacheMaxTier = d.cacheMaxTier > 0 ? d.cacheMaxTier : 3,
-            CacheUpgradeFoodCost = d.cacheUpgradeFoodCost > 0 ? d.cacheUpgradeFoodCost : 100,
-            CacheAttackDamage = d.cacheAttackDamage > 0 ? d.cacheAttackDamage : 6,
-            CacheAttackRangeCenti = d.cacheAttackRangeCenti > 0 ? d.cacheAttackRangeCenti : 600,
-            CacheAttackCooldownTicks = d.cacheAttackCooldownTicks > 0 ? d.cacheAttackCooldownTicks : 30,
-            CacheProjectileSpeedCenti = d.cacheProjectileSpeedCenti > 0 ? d.cacheProjectileSpeedCenti : 1400,
+            SlowBeatTicks = d.slowBeatTicks > 0 ? d.slowBeatTicks : 20,
+            HarvestBasePerBeat = d.harvestBasePerBeat > 0 ? d.harvestBasePerBeat : 4,
+            HarvestPerWorker = d.harvestPerWorker > 0 ? d.harvestPerWorker : 2,
+            HarvestNodeCapPerBeat = d.harvestNodeCapPerBeat > 0 ? d.harvestNodeCapPerBeat : 25,
             UnitVisionRangeCenti = d.unitVisionRangeCenti > 0 ? d.unitVisionRangeCenti : 1400,
             BuildingVisionRangeCenti = d.buildingVisionRangeCenti > 0 ? d.buildingVisionRangeCenti : 2000,
             HubBuildRate = d.hubBuildRate > 0 ? d.hubBuildRate : 3,
             StartingMinerals = d.startingMinerals,
             KillBountyNum = d.killBountyNum > 0 ? d.killBountyNum : 1,
             KillBountyDen = d.killBountyDen > 0 ? d.killBountyDen : 10,
-            CollisionBlockRatioNum = d.collisionBlockRatioNum > 0 ? d.collisionBlockRatioNum : 2,
-            CollisionBlockRatioDen = d.collisionBlockRatioDen > 0 ? d.collisionBlockRatioDen : 1,
             EvoPerKill = d.evoPerKill > 0 ? d.evoPerKill : 1,
         };
 

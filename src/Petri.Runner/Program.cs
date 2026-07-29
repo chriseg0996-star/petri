@@ -163,19 +163,13 @@ namespace Petri.Runner
             var parts = new List<string>();
             for (byte p = 0; p < w.Players.Length; p++)
             {
-                int units = 0;
-                int leaders = 0;
-                int hqHp = 0;
-                for (int i = 0; i < w.HighWater; i++)
-                {
-                    if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == p)
-                    {
-                        units++;
-                        if (sim.Defs.Units[w.DefIndex[i]].IsLeader) leaders++;
-                    }
-                    if (w.Kind[i] == EntityKind.Building && w.Owner[i] == p && sim.Defs.Buildings[w.DefIndex[i]].IsHeadquarters) hqHp = w.Hp[i];
-                }
-                parts.Add($"P{p} food={w.Players[p].Food} units={units} leaders={leaders} hqHP={hqHp}");
+                var pl = w.Players[p];
+                int cells = 0;
+                for (int c = 0; c < w.Territory.Length; c++) if (w.Territory[c] == p) cells++;
+                int force = 0;
+                for (int k = 0; k < pl.Force.Length; k++) force += pl.Force[k];
+                int pct = w.OwnableCellCount > 0 ? cells * 100 / w.OwnableCellCount : 0;
+                parts.Add($"P{p} terr={pct}% food={pl.Food} workers={pl.WorkerCount} force={force} hp={pl.OrganismHealth}");
             }
             int sec = w.TickCount / SimConstants.TicksPerSecond;
             Console.WriteLine($"t={sec / 60:00}:{sec % 60:00} | {string.Join(" | ", parts)}");
@@ -213,17 +207,16 @@ namespace Petri.Runner
     }
 
     /// <summary>
-    /// A scripted command source standing in for players (per project direction: no AI bots
-    /// yet). It reads sim state and issues commands through the same log a UI or network
-    /// peer would use: composition weights at tick 0, then periodic attack waves at the
-    /// enemy headquarters so combat, collision, and elimination all get exercised.
+    /// A scripted command source standing in for players. It reads sim state and issues
+    /// commands through the same log a UI or network peer would use: composition weights
+    /// and an incubator placement at tick 0, then periodic PushFront orders toward the
+    /// enemy nucleus so growth, fronts, and (once implemented) combat all get exercised.
     /// </summary>
     internal sealed class ScriptedDriver
     {
         private readonly int _workerIx;
         private readonly int _soldierIx;
         private readonly int _spitterIx;
-        private readonly int _leaderIx;
         private readonly int _incubatorIx;
 
         public ScriptedDriver(DefDatabase defs)
@@ -231,7 +224,6 @@ namespace Petri.Runner
             _workerIx = defs.UnitIndex("strain.forager");
             _soldierIx = defs.UnitIndex("strain.predator");
             _spitterIx = defs.UnitIndex("strain.secretor");
-            _leaderIx = defs.UnitIndex("strain.swarm-leader");
             _incubatorIx = defs.BuildingIndex("strain.incubator");
         }
 
@@ -249,53 +241,43 @@ namespace Petri.Runner
                     log.Add(new Command { Tick = 0, Player = p, Type = CommandType.SetProductionWeight, A = _workerIx, B = 2 });
                     log.Add(new Command { Tick = 0, Player = p, Type = CommandType.SetProductionWeight, A = _soldierIx, B = 4 });
                     log.Add(new Command { Tick = 0, Player = p, Type = CommandType.SetProductionWeight, A = _spitterIx, B = 3 });
-                    log.Add(new Command { Tick = 0, Player = p, Type = CommandType.SetProductionWeight, A = _leaderIx, B = 1 });
-
-                    // Combat units now need an incubator (no starting one): each player builds
-                    // one toward the enemy so the scripted match still fields an army.
-                    int myHq = WorkerSystem.FindHq(w, sim.Defs, p);
-                    int foeHq = WorkerSystem.FindHq(w, sim.Defs, (byte)(w.Players.Length - 1 - p));
-                    int worker = -1;
-                    for (int e = 0; e < w.HighWater; e++)
-                        if (w.Kind[e] == EntityKind.Unit && w.Owner[e] == p && sim.Defs.Units[w.DefIndex[e]].IsWorker) { worker = e; break; }
-                    if (myHq >= 0 && foeHq >= 0 && worker >= 0)
-                    {
-                        int mx = Centi(w.Pos[myHq].X), my = Centi(w.Pos[myHq].Y);
-                        int fx = Centi(w.Pos[foeHq].X), fy = Centi(w.Pos[foeHq].Y);
-                        log.Add(new Command
-                        {
-                            Tick = 0, Player = p, Type = CommandType.ConstructBuilding, A = worker,
-                            B = mx + (fx - mx) / 16, C = my + (fy - my) / 16, D = _incubatorIx,
-                        });
-                    }
                 }
                 return;
             }
 
-            if (tick < 1500 || (tick - 1500) % 1200 != 0) return;
+            // Once the starting blob has grown a little, drop an incubator next to the
+            // nucleus (buildings self-build inside own territory now).
+            if (tick == 200)
+            {
+                for (byte p = 0; p < w.Players.Length; p++)
+                {
+                    int myHq = WorldQuery.FindHq(w, sim.Defs, p);
+                    if (myHq < 0) continue;
+                    int mx = Centi(w.Pos[myHq].X), my = Centi(w.Pos[myHq].Y);
+                    int toward = mx < Centi(w.MapWidth) / 2 ? 1 : -1;
+                    log.Add(new Command
+                    {
+                        Tick = tick, Player = p, Type = CommandType.ConstructBuilding, A = -1,
+                        B = mx + toward * 400, C = my, D = _incubatorIx,
+                    });
+                }
+                return;
+            }
 
+            // Periodic pushes: each player shoves the front facing the enemy nucleus.
+            if (tick < 1500 || (tick - 1500) % 1200 != 0) return;
             for (byte p = 0; p < w.Players.Length; p++)
             {
                 if (!w.Players[p].Alive) continue;
                 byte enemy = (byte)(1 - p);
-                int enemyHq = WorkerSystem.FindHq(w, sim.Defs, enemy);
+                int enemyHq = WorldQuery.FindHq(w, sim.Defs, enemy);
                 if (enemyHq < 0) continue;
-                int hqX = (int)(w.Pos[enemyHq].X.Raw * 100 >> Fix.FracBits);
-                int hqY = (int)(w.Pos[enemyHq].Y.Raw * 100 >> Fix.FracBits);
-                for (int e = 0; e < w.HighWater; e++)
-                {
-                    if (w.Kind[e] != EntityKind.Unit || w.Owner[e] != p) continue;
-                    var def = sim.Defs.Units[w.DefIndex[e]];
-                    if (def.IsWorker || w.AttackMove[e]) continue;
-                    // Every combat unit attack-moves at the enemy HQ with a small
-                    // deterministic scatter so the scripted match exercises real fights.
-                    log.Add(new Command
-                    {
-                        Tick = tick, Player = p,
-                        Type = def.AttackDamage > 0 ? CommandType.AttackMove : CommandType.Move,
-                        A = e, B = hqX + (e % 5 - 2) * 40, C = hqY + (e % 3 - 1) * 40,
-                    });
-                }
+                int ex = Centi(w.Pos[enemyHq].X), ey = Centi(w.Pos[enemyHq].Y);
+                // Which of my fronts faces the enemy nucleus? Classify with the shared math
+                // against my current centroid (deterministic: reads hashed state only).
+                int front = FrontMath.Sector(w.Players[p].FrontCount,
+                    ex - w.ScratchCentXCenti[p], ey - w.ScratchCentYCenti[p]);
+                log.Add(new Command { Tick = tick, Player = p, Type = CommandType.PushFront, A = front, B = ex, C = ey });
             }
         }
     }

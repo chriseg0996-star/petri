@@ -5,17 +5,13 @@ using Petri.Core;
 namespace Petri.Client
 {
     /// <summary>
-    /// Renders the sim as readable top-down sprites. The view is a pure projection of sim state
-    /// — it never writes back. Sprites are generated at runtime (disc, ring, square, square
-    /// outline) so the project needs no art assets; authored C&C-style sprites drop in later by
-    /// swapping these per def id. Entities, selection outlines, order pings, rally markers, and
-    /// the build-placement ghost are all pooled/reused to keep per-frame allocations at zero.
+    /// Renders the superorganism world: buildings, resource nodes, terrain walls, fog, and
+    /// transient effects (pings, death pops, the build ghost). The territory overlay itself
+    /// lands with the territory-rendering pass; entities never move, so there is no render
+    /// interpolation. The view is a pure projection of sim state and never writes back.
     /// </summary>
     public sealed class GameView : MonoBehaviour
     {
-        // The first eight are hand-picked and deliberately avoid green (which reads as a
-        // neutral node); the rest are spread by golden-angle hue so 32 seats stay tellable
-        // apart. Single source of truth — the HUD/minimap read this via OwnerColor().
         private static readonly Color[] OwnerColors = BuildPalette(32);
 
         /// <summary>Colour for an owner slot (wraps, so any owner index is safe).</summary>
@@ -44,6 +40,7 @@ namespace Petri.Client
             }
             return arr;
         }
+
         // Resource identity colours — ONE source of truth. The nodes on the map, the minimap
         // blips and every HUD readout all key off these, so a number's colour always tells you
         // which resource it is.
@@ -51,29 +48,23 @@ namespace Petri.Client
         public static readonly Color MineralColor = new Color(0.54f, 0.71f, 1.00f);  // steel blue
         public static readonly Color EvoColor = new Color(0.84f, 0.61f, 1.00f);      // violet
 
-        private static readonly Color NeutralColor = NutrientColor;
         private static readonly Color SelectionColor = Color.white;
         public static readonly Color MovePing = new Color(0.4f, 1f, 0.5f);
         public static readonly Color RallyPing = new Color(1f, 0.85f, 0.3f);
         public static readonly Color AttackPing = new Color(1f, 0.35f, 0.3f);
 
         private const float PingSeconds = 0.6f;
+        private const float PopSeconds = 0.4f;
 
         private struct PingFx { public Vector3 Pos; public float Start; public Color Color; }
         private struct PopFx { public Vector3 Pos; public float Start; public Color Color; public float Size; }
-        private struct ProjectileFx { public Vector3 From, To; public float Start, Duration; public Color Color; }
-        private const float PopSeconds = 0.4f;
 
         private MatchBootstrap _match;
         private Sprite _disc, _ring, _thinRing, _square, _squareOutline, _arrow, _diamond;
         private Sprite _triangle, _pentagon, _hexagon, _octagon, _star, _kite, _cross,
             _crescent, _bullseye, _diamondOutline;
-        private Sprite[] _digits; // runtime 3x5 pixel numerals for tier badges
-        // Per-def silhouettes so every unit and building type reads at a glance.
-        private Sprite[] _unitShape, _buildingShape;
-        // Per-def VISUAL size multiplier (rendering + click hitbox only — collision radii
-        // are untouched, so gameplay and determinism don't move).
-        private float[] _unitScale;
+        private Sprite[] _digits;
+        private Sprite[] _buildingShape; // per-def silhouettes so buildings read at a glance
 
         // Fog of war (client-side; null when disabled in the skirmish setup).
         public VisionMap Vision { get; private set; }
@@ -85,26 +76,16 @@ namespace Petri.Client
         private static readonly Color32 FogUnseen = new Color32(5, 8, 5, 243);
         private static readonly Color32 FogExplored = new Color32(5, 8, 5, 120);
         private static readonly Color32 FogVisible = new Color32(0, 0, 0, 0);
+
         private readonly List<SpriteRenderer> _bodies = new List<SpriteRenderer>();
         private readonly List<SpriteRenderer> _overlays = new List<SpriteRenderer>();
         private readonly List<PingFx> _pings = new List<PingFx>();
         private readonly List<PopFx> _pops = new List<PopFx>();
-        private readonly List<ProjectileFx> _projectiles = new List<ProjectileFx>();
         private SpriteRenderer _ghost;
+        private float[] _selFade;
 
-        // Hit feedback: victims blink white briefly when damage lands (fed by AttackEvents).
-        private float[] _blinkUntil;
-
-        // Render interpolation: the sim moves at 20 Hz, so we lerp each entity between its
-        // previous-tick and current-tick position/facing by MatchBootstrap.TickAlpha. Purely
-        // cosmetic — the sim is never read for these; hashes are untouched.
-        private Vector2[] _ipPrevPos, _ipCurPos, _ipPrevFace, _ipCurFace;
-        private int[] _ipGen;
-        private int _ipTick = int.MinValue;
-        private float[] _selFade; // per-slot selection-outline fade (eased 0..1)
-
-        // Last rendered frame's snapshot, for death detection: a slot that held a unit or
-        // building and is now empty (or holds a different generation) just died there.
+        // Last rendered frame's snapshot, for death pops: a slot that held a building and is
+        // now empty (or a different generation) just died there.
         private EntityKind[] _prevKind;
         private int[] _prevGen;
         private byte[] _prevOwner;
@@ -117,8 +98,7 @@ namespace Petri.Client
             _match = match;
             BuildSpriteAtlas();
 
-            // Terrain walls never move: one persistent renderer each (dark body + a faint
-            // rim so the edge reads), under every entity. Fog blankets them like the rest.
+            // Terrain walls never move: one persistent renderer each (dark body + rim).
             var world = match.Sim.World;
             for (int k = 0; k < world.WallPos.Length; k++)
             {
@@ -142,6 +122,7 @@ namespace Petri.Client
                 rim.color = new Color(0.34f, 0.38f, 0.33f, 0.9f);
                 rim.sortingOrder = 1;
             }
+
             if (MatchBootstrap.PendingFog)
             {
                 Vision = new VisionMap();
@@ -154,7 +135,6 @@ namespace Petri.Client
                 var fogGo = new GameObject("fog");
                 fogGo.transform.SetParent(transform);
                 _fogRenderer = fogGo.AddComponent<SpriteRenderer>();
-                // 1 pixel = 1 world unit; pivot at the map origin so position (0,0) lines up.
                 _fogRenderer.sprite = Sprite.Create(_fogTex, new Rect(0, 0, Vision.CellsX, Vision.CellsY), Vector2.zero, 1f);
                 _fogRenderer.transform.position = Vector3.zero;
                 _fogRenderer.sortingOrder = 20; // blankets everything in the world
@@ -166,43 +146,11 @@ namespace Petri.Client
             _prevOwner = new byte[cap];
             _prevPos = new Vector3[cap];
             _prevSize = new float[cap];
-            _blinkUntil = new float[cap];
-            _ipPrevPos = new Vector2[cap];
-            _ipCurPos = new Vector2[cap];
-            _ipPrevFace = new Vector2[cap];
-            _ipCurFace = new Vector2[cap];
-            _ipGen = new int[cap];
             _selFade = new float[cap];
         }
 
-        /// <summary>On each new sim tick, roll current→previous and capture the new positions/
-        /// facings. Fresh occupants (generation change) or a multi-tick catch-up snap instead of
-        /// streaking across the map.</summary>
-        private void RollInterp(SimWorld w)
-        {
-            bool bigGap = w.TickCount - _ipTick > 1;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] == EntityKind.None) { _ipGen[i] = -1; continue; }
-                var p = new Vector2(ToF(w.Pos[i].X), ToF(w.Pos[i].Y));
-                var f = new Vector2(w.Facing[i].X.Raw / (float)Fix.OneRaw, w.Facing[i].Y.Raw / (float)Fix.OneRaw);
-                bool fresh = bigGap || w.Generation[i] != _ipGen[i];
-                if (fresh) _selFade[i] = 0f; // don't inherit the prior occupant's selection glow
-                _ipPrevPos[i] = fresh ? p : _ipCurPos[i];
-                _ipCurPos[i] = p;
-                _ipPrevFace[i] = fresh ? f : _ipCurFace[i];
-                _ipCurFace[i] = f;
-                _ipGen[i] = w.Generation[i];
-            }
-            _ipTick = w.TickCount;
-        }
-
-        /// <summary>
-        /// Pack every runtime-generated shape into ONE atlas texture. Sprites that share a
-        /// texture share a material, so Unity can batch thousands of entities into a handful
-        /// of draw calls — with a texture each, every sprite was its own draw call and frame
-        /// time collapsed as armies grew.
-        /// </summary>
+        /// <summary>Pack every runtime-generated shape into ONE atlas texture so sprites
+        /// share a material and batch.</summary>
         private void BuildSpriteAtlas()
         {
             var texs = new Texture2D[27];
@@ -212,25 +160,20 @@ namespace Petri.Client
             texs[3] = MakeSquareOutlineTex(64, 6);
             texs[4] = MakeArrowTex(32);
             texs[5] = MakeDiamondTex(64);
-            // High-res hairline ring: supply footprints blow a sprite up to ~36 world units,
-            // where the chunky 80% ring became a fat translucent donut. A 256px, 97%-inner
-            // ring stays a crisp thin circle at that scale.
-            texs[6] = MakeRingTex(256, 0.970f);
+            texs[6] = MakeRingTex(256, 0.970f); // hairline ring for large radii
             for (int d = 0; d < 10; d++) texs[7 + d] = MakeDigitTex(d);
-            // Silhouette library: one distinct shape per unit/building archetype.
-            texs[17] = MakeRegularPolyTex(64, 3, 90f);   // triangle (point up)
-            texs[18] = MakeRegularPolyTex(64, 5, 90f);   // pentagon
-            texs[19] = MakeRegularPolyTex(64, 6, 0f);    // hexagon (flat top)
-            texs[20] = MakeRegularPolyTex(64, 8, 22.5f); // octagon
-            texs[21] = MakeStarTex(64, 5, 0.45f);        // 5-point star
-            texs[22] = MakeKiteTex(64);                  // narrow dart
-            texs[23] = MakeCrossTex(64, 0.36f);          // plus/burst
-            texs[24] = MakeCrescentTex(64);              // crescent moon
-            texs[25] = MakeBullseyeTex(64);              // ring with a core dot
-            texs[26] = MakeDiamondOutlineTex(64, 0.55f); // hollow diamond
+            texs[17] = MakeRegularPolyTex(64, 3, 90f);
+            texs[18] = MakeRegularPolyTex(64, 5, 90f);
+            texs[19] = MakeRegularPolyTex(64, 6, 0f);
+            texs[20] = MakeRegularPolyTex(64, 8, 22.5f);
+            texs[21] = MakeStarTex(64, 5, 0.45f);
+            texs[22] = MakeKiteTex(64);
+            texs[23] = MakeCrossTex(64, 0.36f);
+            texs[24] = MakeCrescentTex(64);
+            texs[25] = MakeBullseyeTex(64);
+            texs[26] = MakeDiamondOutlineTex(64, 0.55f);
 
             var atlas = new Texture2D(2, 2, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-            // Padding keeps bilinear sampling from bleeding neighbours into each other.
             Rect[] uv = atlas.PackTextures(texs, 4, 1024);
             atlas.Apply();
 
@@ -254,95 +197,32 @@ namespace Petri.Client
             _bullseye = FromAtlas(atlas, uv[25]);
             _diamondOutline = FromAtlas(atlas, uv[26]);
 
-            foreach (var t in texs) Destroy(t); // the atlas owns the pixels now
+            foreach (var t in texs) Destroy(t);
 
-            BuildShapeTables();
-        }
-
-        /// <summary>One silhouette per def id so every type reads at a glance. Unknown ids
-        /// (test data, future units) fall back on the old role shapes: diamond = ranged,
-        /// bullseye = leader, disc = everything else; buildings default to the square.</summary>
-        private void BuildShapeTables()
-        {
             var defs = _match.Defs;
-            _unitShape = new Sprite[defs.Units.Length];
-            for (int u = 0; u < defs.Units.Length; u++)
-            {
-                var d = defs.Units[u];
-                _unitShape[u] = d.Id switch
-                {
-                    "strain.forager" => _disc,          // worker: plain dim dot
-                    "strain.swimmer" => _triangle,      // cheap fast melee
-                    "strain.flagellate" => _kite,       // sprinting flanker
-                    "strain.lysin" => _crescent,        // cheap acid-spitter
-                    "strain.coccus" => _square,         // living wall
-                    "strain.predator" => _pentagon,     // all-round brawler
-                    "strain.cytolysin" => _star,        // elite hunter
-                    "strain.cyst" => _hexagon,          // armored shell
-                    "strain.swarm-leader" => _bullseye, // aura anchor
-                    "strain.sporecaster" => _diamond,   // budget ranged
-                    "strain.secretor" => _diamondOutline, // mid ranged
-                    "strain.toxinocyte" => _cross,      // long-range artillery
-                    "strain.mite" => _disc,             // free chaff: the smallest dot afield
-                    _ => d.IsLeader ? _bullseye : d.ProjectileSpeedCenti > 0 ? _diamond : _disc,
-                };
-            }
             _buildingShape = new Sprite[defs.Buildings.Length];
             for (int b = 0; b < defs.Buildings.Length; b++)
             {
                 _buildingShape[b] = defs.Buildings[b].Id switch
                 {
-                    "strain.nucleoid" => _octagon,        // the colony core
-                    "strain.incubator" => _square,        // basic producer
-                    "strain.mutagen-pool" => _ring,       // evolution pool
-                    "strain.sentinel-spire" => _triangle, // defensive spire
-                    "strain.lysis-chamber" => _pentagon,  // tech prongs, one shape each
+                    "strain.nucleoid" => _octagon,
+                    "strain.incubator" => _square,
+                    "strain.mutagen-pool" => _ring,
+                    "strain.sentinel-spire" => _triangle,
+                    "strain.lysis-chamber" => _pentagon,
                     "strain.flagella-bay" => _kite,
                     "strain.toxin-gland" => _cross,
                     "strain.capsule-foundry" => _hexagon,
-                    "strain.spike-battery" => _star,               // defensive turret
-                    "strain.burrow-node" => _bullseye,             // expansion drop-off
-                    "strain.chitin-rampart" => _squareOutline,     // wall plug
-                    "strain.brood-sac" => _crescent,               // free-mite spawner
-                    "strain.plasmid-reliquary" => _diamondOutline, // fragile evo vault
+                    "strain.spike-battery" => _star,
+                    "strain.burrow-node" => _bullseye,
+                    "strain.chitin-rampart" => _squareOutline,
+                    "strain.brood-sac" => _crescent,
+                    "strain.plasmid-reliquary" => _diamondOutline,
                     _ => _square,
                 };
             }
-
-            // Visual size tiers, all derived from def stats so future units follow suit:
-            // leaders tower over the field, melee grows with its tank stat (PushResistance,
-            // the sim's own blocking weight), ranged stays smaller but grows with reach.
-            int minRange = int.MaxValue, maxRange = int.MinValue;
-            for (int u = 0; u < defs.Units.Length; u++)
-            {
-                var d = defs.Units[u];
-                if (d.AttackDamage <= 0 || d.ProjectileSpeedCenti <= 0) continue;
-                minRange = Mathf.Min(minRange, d.AttackRangeCenti);
-                maxRange = Mathf.Max(maxRange, d.AttackRangeCenti);
-            }
-            _unitScale = new float[defs.Units.Length];
-            for (int u = 0; u < defs.Units.Length; u++)
-            {
-                var d = defs.Units[u];
-                if (d.IsLeader) _unitScale[u] = 1.5f;
-                else if (d.IsWorker) _unitScale[u] = 0.85f;
-                else if (d.AttackDamage > 0 && d.ProjectileSpeedCenti > 0)
-                {
-                    float t = maxRange > minRange
-                        ? (d.AttackRangeCenti - minRange) / (float)(maxRange - minRange) : 0.5f;
-                    _unitScale[u] = Mathf.Lerp(0.85f, 1.15f, t); // longer reach reads bigger
-                }
-                else
-                    _unitScale[u] = 0.9f + 0.15f * Mathf.Clamp(d.PushResistance - 1, 0, 3);
-            }
         }
 
-        /// <summary>Rendering size multiplier for a unit def — the click hitbox uses the
-        /// same number so what you see is what you can click.</summary>
-        public float UnitVisualScale(int defIx) => _unitScale[defIx];
-
-        /// <summary>Sprite for one atlas cell. pixelsPerUnit = the cell's pixel height, so a
-        /// transform scale of 1 is still exactly one world unit tall (as before atlasing).</summary>
         private static Sprite FromAtlas(Texture2D atlas, Rect uvRect)
         {
             var px = new Rect(uvRect.x * atlas.width, uvRect.y * atlas.height,
@@ -354,37 +234,6 @@ namespace Petri.Client
         public void Ping(Vector3 worldPos, Color color) =>
             _pings.Add(new PingFx { Pos = worldPos, Start = Time.time, Color = color });
 
-        /// <summary>A hit landed this tick: ranged attackers (projectileSpeedCenti &gt; 0 in the
-        /// unit's def) fly a small dot from shooter to victim at that speed. Melee gets nothing
-        /// (yet). Purely cosmetic — the sim's damage already applied.</summary>
-        public void SpawnAttackFx(int attacker, int target)
-        {
-            var w = _match.Sim.World;
-            // Fights entirely inside the fog stay silent.
-            if (Vision != null
-                && !Vision.VisibleAt(ToF(w.Pos[attacker].X), ToF(w.Pos[attacker].Y))
-                && !Vision.VisibleAt(ToF(w.Pos[target].X), ToF(w.Pos[target].Y))) return;
-            _blinkUntil[target] = Time.time + 0.12f; // white damage blink on the victim
-            // Armed buildings prefer their own def speed; tiered caches fall back on rules.
-            float speed;
-            if (w.Kind[attacker] == EntityKind.Building)
-            {
-                int centi = _match.Defs.Buildings[w.DefIndex[attacker]].ProjectileSpeedCenti;
-                speed = (centi > 0 ? centi : w.Rules.CacheProjectileSpeedCenti) / 100f;
-            }
-            else speed = _match.Defs.Units[w.DefIndex[attacker]].ProjectileSpeedCenti / 100f;
-            if (speed <= 0f) return;
-            var from = new Vector3(ToF(w.Pos[attacker].X), ToF(w.Pos[attacker].Y), 0f);
-            var to = new Vector3(ToF(w.Pos[target].X), ToF(w.Pos[target].Y), 0f);
-            float dist = Vector3.Distance(from, to);
-            if (dist < 0.05f) return;
-            _projectiles.Add(new ProjectileFx
-            {
-                From = from, To = to, Start = Time.time, Duration = dist / speed,
-                Color = Color.Lerp(OwnerColors[w.Owner[attacker] % OwnerColors.Length], Color.white, 0.55f),
-            });
-        }
-
         private void LateUpdate()
         {
             if (_match == null || _match.Sim == null) return;
@@ -393,184 +242,66 @@ namespace Petri.Client
 
             UpdateFog(w, defs);
 
-            if (w.TickCount != _ipTick) RollInterp(w);
-            float alpha = _match.TickAlpha;
-
-            // Screen density: when zoomed out, per-unit trimmings are a few pixels across and
-            // unreadable — skipping them there roughly halves the renderer count exactly when
-            // the most entities are on screen.
-            var cam = Camera.main;
-            float pxPerUnit = cam != null && cam.orthographicSize > 0.01f
-                ? Screen.height / (2f * cam.orthographicSize) : 100f;
-
             int body = 0, overlay = 0;
             var input = _match.Input;
             var selected = input != null ? input.Selected : null;
 
-            // ---- Death pops: anything that vanished (or whose slot was regenerated) since the
-            // last rendered frame bursts at its final position (only where the player can see).
+            // ---- Death pops: buildings that vanished since the last frame burst.
             for (int i = 0; i < _prevHigh; i++)
             {
-                if (_prevKind[i] != EntityKind.Unit && _prevKind[i] != EntityKind.Building) continue;
-                if (w.Kind[i] != EntityKind.None && w.Generation[i] == _prevGen[i]) continue;
-                _blinkUntil[i] = 0f; // don't blink the slot's next occupant
+                if (_prevKind[i] != EntityKind.Building) continue;
+                bool gone = i >= w.HighWater || w.Kind[i] != _prevKind[i] || w.Generation[i] != _prevGen[i];
+                if (!gone) continue;
                 if (Vision != null && !Vision.VisibleAt(_prevPos[i].x, _prevPos[i].y)) continue;
-                var c = Color.Lerp(OwnerColors[_prevOwner[i] % OwnerColors.Length], Color.white, 0.45f);
-                _pops.Add(new PopFx { Pos = _prevPos[i], Start = Time.time, Color = c, Size = _prevSize[i] });
+                _pops.Add(new PopFx
+                {
+                    Pos = _prevPos[i], Start = Time.time,
+                    Color = OwnerColor(_prevOwner[i]), Size = _prevSize[i],
+                });
             }
 
+            // ---- Entities: buildings and nodes.
             for (int i = 0; i < w.HighWater; i++)
             {
                 if (w.Kind[i] == EntityKind.None) continue;
+                float x = w.Pos[i].X.Raw / (float)Fix.OneRaw;
+                float y = w.Pos[i].Y.Raw / (float)Fix.OneRaw;
 
-                // Smoothed render position: lerp last-tick → this-tick by the frame's alpha.
-                Vector2 ip = Vector2.Lerp(_ipPrevPos[i], _ipCurPos[i], alpha);
-                float x = ip.x, y = ip.y;
-
-                // Fog culling: your own and ALLIED entities always show (teams share vision);
-                // enemy units exist on screen only while actually seen; enemy buildings and
-                // neutral nodes appear once explored (static — safe to remember).
+                // Fog culling: friendly always shows; enemy buildings and neutral nodes
+                // appear once explored (static — safe to remember).
                 if (Vision != null && !w.IsFriendly(MatchBootstrap.HumanPlayer, w.Owner[i]))
                 {
-                    if (w.Kind[i] == EntityKind.Unit && w.Owner[i] != SimWorld.NeutralOwner)
-                    { if (!Vision.VisibleAt(x, y)) continue; }
-                    else if (!Vision.ExploredAt(x, y)) continue;
+                    if (!Vision.ExploredAt(x, y)) continue;
                 }
-                float radius = ToF(CollisionSystem.RadiusOf(w, defs, i));
+
+                float radius = w.Kind[i] == EntityKind.Building
+                    ? defs.Buildings[w.DefIndex[i]].CollisionRadiusCenti / 100f
+                    : w.Rules.NodeRadiusCenti / 100f;
                 float diameter = Mathf.Max(0.2f, radius * 2f);
-                bool isBuilding = w.Kind[i] == EntityKind.Building;
-                float onScreenPx = diameter * pxPerUnit;
-                bool detail = onScreenPx >= 10f; // facing arrows / tier badges
-                bool bars = onScreenPx >= 7f;    // health bars
 
                 var sr = Rent(_bodies, ref body);
                 sr.transform.position = new Vector3(x, y, 0f);
+                sr.transform.localScale = new Vector3(diameter, diameter, 1f);
 
-                switch (w.Kind[i])
+                if (w.Kind[i] == EntityKind.Node)
                 {
-                    case EntityKind.Building:
-                        sr.sprite = _buildingShape[w.DefIndex[i]];
-                        sr.transform.localScale = new Vector3(diameter, diameter, 1f);
-                        var bc = Dim(OwnerColors[w.Owner[i] % OwnerColors.Length], 0.75f);
-                        // Tiered caches read brighter per tier — an armed depot looks the part.
-                        if (w.Tier[i] > 0) bc = Color.Lerp(bc, Color.white, 0.18f * w.Tier[i]);
-                        if (w.ConstructionRemaining[i] > 0) bc.a = 0.45f; // translucent site
-                        if (Time.time < _blinkUntil[i]) bc = Color.Lerp(bc, Color.white, 0.75f); // hit blink
-                        sr.color = bc;
-                        sr.sortingOrder = 0;
-
-                        // Tier badge: an upgraded cache wears its tier number (matching the
-                        // HUD card's numbering, where an unupgraded cache is tier 1).
-                        if (w.Tier[i] > 0 && detail)
-                        {
-                            var dg = Rent(_overlays, ref overlay);
-                            dg.sprite = _digits[Mathf.Min(9, w.Tier[i] + 1)];
-                            dg.transform.position = new Vector3(x, y, 0f);
-                            float dh = diameter * 0.55f;
-                            dg.transform.localScale = new Vector3(dh, dh, 1f);
-                            dg.color = new Color(0.05f, 0.08f, 0.05f, 0.95f);
-                            dg.sortingOrder = 2;
-                        }
-
-                        // Supply state for the player's own network. A healthy depot draws its
-                        // reach as a clean hairline circle plus a soft inner glow; a dry or cut
-                        // one drops the footprint (it supplies nothing) and wears a pulsing
-                        // badge instead, so problems catch the eye rather than the whole map
-                        // being covered in fat rings.
-                        if (w.Owner[i] == MatchBootstrap.HumanPlayer && w.ConstructionRemaining[i] == 0
-                            && defs.Buildings[w.DefIndex[i]].ProvidesSupply)
-                        {
-                            bool connected = w.ScratchConnected[i];
-                            bool dry = w.DepotStock[i] == 0;
-                            if (connected && !dry)
-                            {
-                                float sd = w.Rules.SupplyRadiusCenti / 100f * 2f;
-                                var glow = Rent(_overlays, ref overlay);   // barely-there fill
-                                glow.sprite = _disc;
-                                glow.transform.position = new Vector3(x, y, 0f);
-                                glow.transform.localScale = new Vector3(sd, sd, 1f);
-                                glow.color = new Color(0.40f, 0.95f, 0.55f, 0.045f);
-                                glow.sortingOrder = 1;
-
-                                var edge = Rent(_overlays, ref overlay);   // crisp reach outline
-                                edge.sprite = _thinRing;
-                                edge.transform.position = new Vector3(x, y, 0f);
-                                edge.transform.localScale = new Vector3(sd, sd, 1f);
-                                edge.color = new Color(0.45f, 1f, 0.6f, 0.32f);
-                                edge.sortingOrder = 2;
-                            }
-                            else
-                            {
-                                // Gentle 1 Hz pulse: amber = stocked-out, red = chain cut.
-                                float pulse = 0.55f + 0.25f * Mathf.Sin(Time.time * 6f);
-                                var badge = Rent(_overlays, ref overlay);
-                                badge.sprite = _ring;
-                                badge.transform.position = new Vector3(x, y, 0f);
-                                float bd2 = diameter * 1.5f;
-                                badge.transform.localScale = new Vector3(bd2, bd2, 1f);
-                                badge.color = !connected
-                                    ? new Color(1f, 0.30f, 0.25f, pulse)
-                                    : new Color(1f, 0.75f, 0.20f, pulse);
-                                badge.sortingOrder = 2;
-                            }
-                        }
-                        break;
-                    case EntityKind.Node:
-                        sr.sprite = _disc;
-                        sr.transform.localScale = new Vector3(diameter, diameter, 1f);
-                        sr.color = w.NodeMineral[i] ? MineralColor : NutrientColor;
-                        sr.sortingOrder = 1;
-                        break;
-                    default: // Unit
-                        var ud = defs.Units[w.DefIndex[i]];
-                        diameter *= _unitScale[w.DefIndex[i]]; // size tiers: readability at a glance
-                        Color c = OwnerColors[w.Owner[i] % OwnerColors.Length];
-                        if (ud.IsLeader) c = Color.Lerp(c, Color.white, 0.5f);
-                        else if (ud.IsWorker) c = Dim(c, 0.7f);
-                        if (Time.time < _blinkUntil[i]) c = Color.Lerp(c, Color.white, 0.75f); // hit blink
-                        // Every unit type wears its own silhouette (see BuildShapeTables).
-                        sr.sprite = _unitShape[w.DefIndex[i]];
-                        sr.transform.localScale = new Vector3(diameter, diameter, 1f);
-                        sr.color = c;
-                        sr.sortingOrder = ud.IsLeader ? 4 : 3;
-
-                        // A selected own leader shows its command-aura reach — units inside
-                        // the ring fight harder, so the player can shape the line around it.
-                        if (ud.IsLeader && w.Owner[i] == MatchBootstrap.HumanPlayer
-                            && selected != null && selected.Contains(i))
-                        {
-                            float ad = w.Rules.LeaderAuraRadiusCenti / 100f * 2f;
-                            var aura = Rent(_overlays, ref overlay);
-                            aura.sprite = _thinRing;
-                            aura.transform.position = new Vector3(x, y, 0f);
-                            aura.transform.localScale = new Vector3(ad, ad, 1f);
-                            aura.color = new Color(0.65f, 0.85f, 1f, 0.35f);
-                            aura.sortingOrder = 2;
-                        }
-
-                        if (!detail) break; // zoomed out: the arrow would be sub-pixel noise
-                        // Facing arrow: a small dark wedge riding the front edge of the body,
-                        // oriented along the unit's simulated facing (interpolated for smoothness).
-                        Vector2 fdir = Vector2.Lerp(_ipPrevFace[i], _ipCurFace[i], alpha);
-                        float fxd = fdir.x, fyd = fdir.y;
-                        var ar = Rent(_overlays, ref overlay);
-                        ar.sprite = _arrow;
-                        float aSize = diameter * 0.62f;
-                        ar.transform.position = new Vector3(x + fxd * radius * 0.5f, y + fyd * radius * 0.5f, 0f);
-                        ar.transform.localScale = new Vector3(aSize, aSize, 1f);
-                        ar.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(fyd, fxd) * Mathf.Rad2Deg);
-                        // Red arrow = out of supply (fighting at reduced effect).
-                        ar.color = w.SupplyTicks[i] == 0
-                            ? new Color(1f, 0.25f, 0.2f, 0.95f)
-                            : new Color(0.05f, 0.08f, 0.05f, 0.8f);
-                        ar.sortingOrder = ud.IsLeader ? 5 : 4;
-                        break;
+                    sr.sprite = _disc;
+                    sr.color = w.NodeMineral[i] ? MineralColor : NutrientColor;
+                    sr.sortingOrder = 1;
+                }
+                else
+                {
+                    sr.sprite = _buildingShape[w.DefIndex[i]];
+                    var bc = Dim(OwnerColor(w.Owner[i]), 0.75f);
+                    if (w.ConstructionRemaining[i] > 0) bc.a = 0.45f; // translucent site
+                    sr.color = bc;
+                    sr.sortingOrder = 2;
                 }
 
-                // ---- Health bar above damaged units/buildings; hidden at full health.
-                if (bars && w.Kind[i] != EntityKind.Node)
+                // Health bar for damaged buildings.
+                if (w.Kind[i] == EntityKind.Building)
                 {
-                    int maxHp = isBuilding ? defs.Buildings[w.DefIndex[i]].MaxHp << w.Tier[i] : defs.Units[w.DefIndex[i]].MaxHp;
+                    int maxHp = defs.Buildings[w.DefIndex[i]].MaxHp;
                     if (maxHp > 0 && w.Hp[i] > 0 && w.Hp[i] < maxHp)
                     {
                         float frac = w.Hp[i] / (float)maxHp;
@@ -594,149 +325,80 @@ namespace Petri.Client
                     }
                 }
 
-                // Selection outline eases in on select and out on deselect (no hard pop).
+                // Selection outline eases in on select and out on deselect.
                 bool isSel = selected != null && selected.Contains(i);
                 _selFade[i] = Mathf.MoveTowards(_selFade[i], isSel ? 1f : 0f, Time.deltaTime / 0.10f);
                 if (_selFade[i] > 0.01f)
                 {
-                    // White outline sized to the entity's own sprite — a small proportional
-                    // margin so it hugs just outside the graphic, consistent whether it's a
-                    // tiny worker or a big leader/building (no fixed pad that dwarfs small units).
                     var so = Rent(_overlays, ref overlay);
                     so.transform.position = new Vector3(x, y, 0f);
-                    so.sprite = isBuilding ? _squareOutline : _ring;
-                    // Settle from a touch larger to its resting size as it fades in.
-                    float rest = isBuilding ? 1.06f : 1.15f;
+                    so.sprite = w.Kind[i] == EntityKind.Building ? _squareOutline : _ring;
+                    float rest = w.Kind[i] == EntityKind.Building ? 1.06f : 1.15f;
                     float sel = diameter * Mathf.Lerp(rest + 0.14f, rest, _selFade[i]);
                     so.transform.localScale = new Vector3(sel, sel, 1f);
                     var selc = SelectionColor; selc.a = _selFade[i];
                     so.color = selc;
                     so.sortingOrder = 6;
                 }
-
-                if (isSel)
-                {
-                    // Rally flag for selected own buildings.
-                    if (isBuilding && w.HasRally[i] && w.Owner[i] == MatchBootstrap.HumanPlayer)
-                    {
-                        var rp = Rent(_overlays, ref overlay);
-                        rp.transform.position = new Vector3(ToF(w.RallyPoint[i].X), ToF(w.RallyPoint[i].Y), 0f);
-                        rp.sprite = _ring;
-                        rp.transform.localScale = new Vector3(0.5f, 0.5f, 1f);
-                        rp.color = RallyPing;
-                        rp.sortingOrder = 6;
-                    }
-                }
             }
 
-            // ---- Command lines: for each selected own unit, the path it will take — the
-            // active leg plus every shift-queued leg, green for moves, red for attack-moves,
-            // a dot per waypoint.
-            if (selected != null)
+            // ---- Pings.
+            for (int k = _pings.Count - 1; k >= 0; k--)
             {
-                foreach (int i in selected)
-                {
-                    if (i >= w.HighWater || w.Kind[i] != EntityKind.Unit) continue;
-                    if (w.Owner[i] != MatchBootstrap.HumanPlayer) continue;
-                    var from = new Vector3(ToF(w.Pos[i].X), ToF(w.Pos[i].Y), 0f);
-                    if (w.HasMoveOrder[i] || w.AttackMove[i])
-                    {
-                        var to = new Vector3(ToF(w.MoveTarget[i].X), ToF(w.MoveTarget[i].Y), 0f);
-                        DrawOrderLine(from, to, w.AttackMove[i], ref overlay);
-                        from = to;
-                    }
-                    int qb = i * SimConstants.MaxOrderQueue;
-                    for (int q = 0; q < w.QueueCount[i]; q++)
-                    {
-                        bool attack = w.QueueKind[qb + q] == SimConstants.OrderAttackMove;
-                        var to = new Vector3(ToF(w.QueuePos[qb + q].X), ToF(w.QueuePos[qb + q].Y), 0f);
-                        DrawOrderLine(from, to, attack, ref overlay);
-                        var dot = Rent(_overlays, ref overlay);
-                        dot.sprite = _ring;
-                        dot.transform.position = to;
-                        dot.transform.localScale = new Vector3(0.3f, 0.3f, 1f);
-                        var dc = attack ? AttackPing : MovePing;
-                        dc.a = 0.8f;
-                        dot.color = dc;
-                        dot.sortingOrder = 2;
-                        from = to;
-                    }
-                }
-            }
-
-            // ---- Order pings: expand and fade, then expire.
-            for (int p = _pings.Count - 1; p >= 0; p--)
-            {
-                float t = (Time.time - _pings[p].Start) / PingSeconds;
-                if (t >= 1f) { _pings.RemoveAt(p); continue; }
+                float t = (Time.time - _pings[k].Start) / PingSeconds;
+                if (t >= 1f) { _pings.RemoveAt(k); continue; }
                 var pr = Rent(_overlays, ref overlay);
-                pr.transform.position = _pings[p].Pos;
+                pr.sprite = _ring;
+                pr.transform.position = _pings[k].Pos;
                 float s = Mathf.Lerp(0.25f, 1.6f, t);
                 pr.transform.localScale = new Vector3(s, s, 1f);
-                var pc = _pings[p].Color;
-                pc.a = 1f - t;
-                pr.sprite = _ring;
-                pr.color = pc;
+                var c = _pings[k].Color; c.a = 1f - t;
+                pr.color = c;
                 pr.sortingOrder = 7;
             }
 
-            // ---- Projectiles: small dots flying shooter → victim at the def's speed.
-            for (int p = _projectiles.Count - 1; p >= 0; p--)
+            // ---- Death pops.
+            for (int k = _pops.Count - 1; k >= 0; k--)
             {
-                float t = (Time.time - _projectiles[p].Start) / Mathf.Max(0.02f, _projectiles[p].Duration);
-                if (t >= 1f) { _projectiles.RemoveAt(p); continue; }
+                float t = (Time.time - _pops[k].Start) / PopSeconds;
+                if (t >= 1f) { _pops.RemoveAt(k); continue; }
                 var pr = Rent(_overlays, ref overlay);
-                pr.transform.position = Vector3.Lerp(_projectiles[p].From, _projectiles[p].To, t);
-                pr.transform.localScale = new Vector3(0.14f, 0.14f, 1f);
-                pr.sprite = _disc;
-                pr.color = _projectiles[p].Color;
-                pr.sortingOrder = 5;
-            }
-
-            // ---- Death pops: a bright burst that swells and fades where something died.
-            for (int p = _pops.Count - 1; p >= 0; p--)
-            {
-                float t = (Time.time - _pops[p].Start) / PopSeconds;
-                if (t >= 1f) { _pops.RemoveAt(p); continue; }
-                var pr = Rent(_overlays, ref overlay);
-                pr.transform.position = _pops[p].Pos;
-                float s = _pops[p].Size * Mathf.Lerp(1f, 2.2f, t);
+                pr.sprite = _ring;
+                pr.transform.position = _pops[k].Pos;
+                float s = _pops[k].Size * Mathf.Lerp(1f, 2.2f, t);
                 pr.transform.localScale = new Vector3(s, s, 1f);
-                var pc = _pops[p].Color;
-                pc.a = 0.85f * (1f - t) * (1f - t); // ease out
-                pr.sprite = _disc;
-                pr.color = pc;
+                var c = _pops[k].Color; c.a = 0.85f * (1f - t) * (1f - t);
+                pr.color = c;
                 pr.sortingOrder = 8;
             }
 
             DrawGhost(w, defs, input);
 
-            for (int i = body; i < _bodies.Count; i++) _bodies[i].enabled = false;
-            for (int i = overlay; i < _overlays.Count; i++) _overlays[i].enabled = false;
-
-            // ---- Snapshot this frame for next frame's death detection.
+            // Snapshot for next frame's death detection; disable the pool tails.
             for (int i = 0; i < w.HighWater; i++)
             {
                 _prevKind[i] = w.Kind[i];
                 _prevGen[i] = w.Generation[i];
                 _prevOwner[i] = w.Owner[i];
-                _prevPos[i] = new Vector3(ToF(w.Pos[i].X), ToF(w.Pos[i].Y), 0f);
-                _prevSize[i] = Mathf.Max(0.25f, ToF(CollisionSystem.RadiusOf(w, defs, i)) * 2f);
+                _prevPos[i] = new Vector3(w.Pos[i].X.Raw / (float)Fix.OneRaw, w.Pos[i].Y.Raw / (float)Fix.OneRaw, 0f);
+                _prevSize[i] = w.Kind[i] == EntityKind.Building
+                    ? defs.Buildings[w.DefIndex[i]].CollisionRadiusCenti / 100f * 2f : 0.5f;
             }
             _prevHigh = w.HighWater;
+            for (int i = body; i < _bodies.Count; i++) _bodies[i].enabled = false;
+            for (int i = overlay; i < _overlays.Count; i++) _overlays[i].enabled = false;
         }
 
-        /// <summary>Rebuild visibility and repaint the fog blanket on a modest cadence —
-        /// derived view state only, never fed back into the sim.</summary>
         private void UpdateFog(SimWorld w, DefDatabase defs)
         {
             if (Vision == null || Time.time < _fogNext) return;
             _fogNext = Time.time + FogInterval;
-            Vision.Rebuild(w, defs, MatchBootstrap.HumanPlayer);
-            for (int y = 0; y < Vision.CellsY; y++)
+            Vision.Rebuild(w, defs, (byte)MatchBootstrap.HumanPlayer);
+            int cw = Vision.CellsX, ch = Vision.CellsY;
+            for (int y = 0; y < ch; y++)
             {
-                int row = y * Vision.CellsX;
-                for (int x = 0; x < Vision.CellsX; x++)
+                int row = y * cw;
+                for (int x = 0; x < cw; x++)
                     _fogPixels[row + x] = Vision.VisibleCell(x, y) ? FogVisible
                         : Vision.ExploredCell(x, y) ? FogExplored : FogUnseen;
             }
@@ -744,8 +406,6 @@ namespace Petri.Client
             _fogTex.Apply(false);
         }
 
-        /// <summary>Translucent footprint following the mouse while placing a building —
-        /// green when the spot is buildable, red when blocked.</summary>
         private void DrawGhost(SimWorld w, DefDatabase defs, InputController input)
         {
             bool placing = input != null && input.PlacingBuilding >= 0;
@@ -764,44 +424,14 @@ namespace Petri.Client
             Vector3 wp = cam.ScreenToWorldPoint(new Vector3(Input.mousePosition.x, Input.mousePosition.y, -cam.transform.position.z));
             var bdef = defs.Buildings[input.PlacingBuilding];
             float d = bdef.CollisionRadiusCenti / 100f * 2f;
+            _ghost.sprite = _buildingShape[input.PlacingBuilding];
             _ghost.transform.position = new Vector3(wp.x, wp.y, 0f);
             _ghost.transform.localScale = new Vector3(d, d, 1f);
-            bool ok = PlacementLooksClear(w, defs, wp, bdef);
+            // Rough validity preview: the cell under the cursor must be yours.
+            int cell = w.CellOfCenti(Mathf.RoundToInt(wp.x * 100f), Mathf.RoundToInt(wp.y * 100f));
+            bool ok = cell >= 0 && cell < w.Territory.Length
+                && w.Territory[cell] == MatchBootstrap.HumanPlayer && !w.TerritoryBlocked[cell];
             _ghost.color = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.45f);
-        }
-
-        // Client-side preview of the sim's placement rule (the command revalidates anyway).
-        private static bool PlacementLooksClear(SimWorld w, DefDatabase defs, Vector3 pos, BuildingDef bdef)
-        {
-            float newR = bdef.CollisionRadiusCenti / 100f;
-            for (int i = 0; i < w.HighWater; i++)
-            {
-                if (w.Kind[i] != EntityKind.Building && w.Kind[i] != EntityKind.Node) continue;
-                float otherR = w.Kind[i] == EntityKind.Building
-                    ? defs.Buildings[w.DefIndex[i]].CollisionRadiusCenti / 100f
-                    : w.Rules.NodeRadiusCenti / 100f;
-                float dx = ToF(w.Pos[i].X) - pos.x, dy = ToF(w.Pos[i].Y) - pos.y;
-                float minD = newR + otherR + 0.1f;
-                if (dx * dx + dy * dy < minD * minD) return false;
-            }
-            return true;
-        }
-
-        /// <summary>One leg of a selected unit's command path: a thin stretched bar from a to b.</summary>
-        private void DrawOrderLine(Vector3 a, Vector3 b, bool attack, ref int overlay)
-        {
-            var d = b - a;
-            float len = d.magnitude;
-            if (len < 0.05f) return;
-            var sr = Rent(_overlays, ref overlay);
-            sr.sprite = _square;
-            sr.transform.position = (a + b) * 0.5f;
-            sr.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
-            sr.transform.localScale = new Vector3(len, 0.07f, 1f);
-            var c = attack ? AttackPing : MovePing;
-            c.a = 0.45f;
-            sr.color = c;
-            sr.sortingOrder = 2; // under unit bodies so the swarm stays readable
         }
 
         private SpriteRenderer Rent(List<SpriteRenderer> pool, ref int cursor)
@@ -816,13 +446,14 @@ namespace Petri.Client
                 pool.Add(sr);
             }
             sr.enabled = true;
-            sr.transform.rotation = Quaternion.identity; // arrows rotate; everything else must not inherit it
+            sr.transform.rotation = Quaternion.identity;
             cursor++;
             return sr;
         }
 
-        private static float ToF(Fix f) => f.Raw / (float)Fix.OneRaw;
-        private static Color Dim(Color c, float k) => new Color(c.r * k, c.g * k, c.b * k, c.a);
+        private static Color Dim(Color c, float f) => new Color(c.r * f, c.g * f, c.b * f, c.a);
+
+        // ---- Runtime-generated shape textures.
 
         private static Texture2D MakeDiscTex(int size)
         {
@@ -862,7 +493,6 @@ namespace Petri.Client
             return tex;
         }
 
-        // Solid diamond (square rotated 45°) — the silhouette for ranged units.
         private static Texture2D MakeDiamondTex(int size)
         {
             var tex = NewTex(size);
@@ -874,7 +504,6 @@ namespace Petri.Client
             return tex;
         }
 
-        // Solid triangle pointing +x, for facing indicators.
         private static Texture2D MakeArrowTex(int size)
         {
             var tex = NewTex(size);
@@ -890,25 +519,16 @@ namespace Petri.Client
             return tex;
         }
 
-        // 3x5 pixel numerals (row strings, top to bottom), scaled up point-filtered so tier
-        // badges stay crisp at any zoom — same no-art-assets philosophy as the shapes.
         private static readonly string[] DigitPatterns =
         {
-            "111101101101111", // 0
-            "010110010010111", // 1
-            "111001111100111", // 2
-            "111001111001111", // 3
-            "101101111001001", // 4
-            "111100111001111", // 5
-            "111100111101111", // 6
-            "111001001001001", // 7
-            "111101111101111", // 8
-            "111101111001111", // 9
+            "111101101101111", "010110010010111", "111001111100111", "111001111001111",
+            "101101111001001", "111100111001111", "111100111101111", "111001001001001",
+            "111101111101111", "111101111001111",
         };
 
         private static Texture2D MakeDigitTex(int digit)
         {
-            const int px = 8; // texture pixels per font pixel
+            const int px = 8;
             var tex = new Texture2D(3 * px, 5 * px, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point };
             string pat = DigitPatterns[digit];
             for (int r = 0; r < 5; r++)
@@ -917,10 +537,10 @@ namespace Petri.Client
                     var col = pat[r * 3 + c] == '1' ? Color.white : Color.clear;
                     for (int yy = 0; yy < px; yy++)
                         for (int xx = 0; xx < px; xx++)
-                            tex.SetPixel(c * px + xx, (4 - r) * px + yy, col); // row 0 is the top
+                            tex.SetPixel(c * px + xx, (4 - r) * px + yy, col);
                 }
             tex.Apply();
-            return tex; // atlased by BuildSpriteAtlas; ppu = cell height keeps it 1 unit tall
+            return tex;
         }
 
         private static Texture2D MakeSquareOutlineTex(int size, int border)
@@ -936,10 +556,6 @@ namespace Petri.Client
             return tex;
         }
 
-        // ---- Silhouette library: distinct per-type shapes, all runtime-generated.
-
-        /// <summary>Filled polygon (verts in normalized 0..1 space, any winding, may be
-        /// non-convex — even-odd crossing test).</summary>
         private static Texture2D MakePolyTex(int size, Vector2[] verts)
         {
             var tex = NewTex(size);
@@ -986,7 +602,6 @@ namespace Petri.Client
             return MakePolyTex(size, v);
         }
 
-        // Narrow dart: reads "fast" at a glance.
         private static Texture2D MakeKiteTex(int size) =>
             MakePolyTex(size, new[]
             {
@@ -1022,7 +637,6 @@ namespace Petri.Client
             return tex;
         }
 
-        // Ring with a core dot — the leader's "command post" glyph.
         private static Texture2D MakeBullseyeTex(int size)
         {
             var tex = NewTex(size);
@@ -1053,6 +667,5 @@ namespace Petri.Client
         }
 
         private static Texture2D NewTex(int size) => new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-
     }
 }
