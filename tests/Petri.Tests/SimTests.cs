@@ -817,7 +817,8 @@ namespace Petri.Tests
             Assert.Equal(sim.Defs.Rules.BreakthroughTicks, p1.FrontBrokenTicks[s1]); // window open
             Assert.Equal(0, p1.FrontDamage[s1]);           // residual pool died with the front
             Assert.Equal(0, (int)w.Territory[strip0]);     // ground taken the SAME beat
-            Assert.Equal(hpBefore - sim.Defs.Rules.CellLossHealth, p1.OrganismHealth);
+            // The beat cost p1: 40/10 = 4 combat attrition plus 3 for the torn-away cell.
+            Assert.Equal(hpBefore - 4 - sim.Defs.Rules.CellLossHealth, p1.OrganismHealth);
 
             // The corridor is one cell wide, so the frontier advances one cell per beat —
             // by two more beats the whole corridor has fallen through the open window.
@@ -920,6 +921,51 @@ namespace Petri.Tests
             w.Players[0].OrganismHealth = max - 2;
             HealthSystem.Tick(w, sim.Defs);
             Assert.Equal(max, w.Players[0].OrganismHealth); // clamped, never over
+        }
+
+        [Fact]
+        public void GrowthSwellsHealthInLockstepDuringPeacetime()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            var pl = w.Players[0];
+            Assert.Equal(pl.OrganismHealthMax, pl.OrganismHealth); // hatched full
+            // Four new cells appear (as growth would add them): +5 health EACH, instantly.
+            int painted = 0;
+            for (int c = 0; c < w.Territory.Length && painted < 4; c++)
+                if (w.Territory[c] == SimWorld.NeutralOwner && !w.TerritoryBlocked[c]) { w.Territory[c] = 0; painted++; }
+            int before = pl.OrganismHealth;
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.Equal(before + 4 * w.Rules.HealthPerCell, pl.OrganismHealth); // regen clamped away
+            Assert.Equal(pl.OrganismHealthMax, pl.OrganismHealth);               // still one value
+        }
+
+        [Fact]
+        public void EngagementFreezesTheClimbAndCombatBleedsTheBody()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int u = w.UnitDefCount;
+            int cellA = 9 * w.TerritoryCellsX + 9, cellB = 9 * w.TerritoryCellsX + 10;
+            w.Territory[cellA] = 0;
+            w.Territory[cellB] = 1;
+            FrontSystem.TickGeometry(w, sim.Defs);
+            var p0 = w.Players[0];
+            var p1 = w.Players[1];
+            p0.Force[w.ScratchCellSector[cellA] * u + 1] = 10; // soldiers: out = 12/beat
+            p1.Force[w.ScratchCellSector[cellB] * u + 1] = 10;
+            int hp0 = p0.OrganismHealth, hp1 = p1.OrganismHealth;
+
+            FrontSystem.TickGeometry(w, sim.Defs);
+            FrontSystem.TickCombat(w, sim.Defs);
+            // MANNED fronts still bleed the organisms: attrition 12/10 = 1 each way.
+            Assert.Equal(hp0 - 1, p0.OrganismHealth);
+            Assert.Equal(hp1 - 1, p1.OrganismHealth);
+
+            // Engaged: the health beat neither regenerates nor follows ceiling growth.
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.Equal(hp0 - 1, p0.OrganismHealth);
+            Assert.Equal(hp1 - 1, p1.OrganismHealth);
         }
 
         [Fact]

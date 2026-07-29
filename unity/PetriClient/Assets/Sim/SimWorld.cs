@@ -22,6 +22,8 @@ namespace Petri.Core
         public int WorkerCount;            // workers are a count, not entities
         public byte FrontCount;            // K, one of SimConstants.FrontCounts
         public int OrganismHealth;         // the organism's shared health pool
+        public int OrganismHealthMax;      // its current ceiling (tracked so growth deltas
+                                           // can swell health in lockstep during peacetime)
         public int[] Force = System.Array.Empty<int>();          // [MaxFronts * unitDefCount]
         public int[] FrontDamage = System.Array.Empty<int>();    // [MaxFronts] accumulated damage
         public int[] FrontBrokenTicks = System.Array.Empty<int>(); // [MaxFronts] breakthrough window
@@ -231,6 +233,7 @@ namespace Petri.Core
                 if (Territory[c] == p) Territory[c] = NeutralOwner;
             pl.WorkerCount = 0;
             pl.OrganismHealth = 0;
+            pl.OrganismHealthMax = 0;
             for (int k = 0; k < pl.Force.Length; k++) pl.Force[k] = 0;
             for (int f = 0; f < SimConstants.MaxFronts; f++)
             {

@@ -127,6 +127,7 @@ namespace Petri.Core
                 Mix((ulong)pl.WorkerCount);
                 Mix(pl.FrontCount);
                 Mix((ulong)pl.OrganismHealth);
+                Mix((ulong)pl.OrganismHealthMax);
                 for (int k = 0; k < pl.Force.Length; k++) Mix((ulong)pl.Force[k]);
                 for (int k = 0; k < SimConstants.MaxFronts; k++)
                 {
@@ -255,7 +256,10 @@ namespace Petri.Core
 
             // Organisms hatch at full health for their starting size.
             for (byte p = 0; p < playerCount; p++)
+            {
                 w.Players[p].OrganismHealth = HealthSystem.MaxOf(w, defs, p);
+                w.Players[p].OrganismHealthMax = w.Players[p].OrganismHealth;
+            }
 
             return w;
         }

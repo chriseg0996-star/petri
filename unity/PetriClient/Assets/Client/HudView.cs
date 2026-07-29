@@ -200,7 +200,7 @@ namespace Petri.Client
                 for (int f = 0; f < SimConstants.MaxFronts; f++) total += mine[f * u + d];
                 _forcePerDef[d] = total;
             }
-            _healthMax = HealthSystem.MaxOf(w, _match.Defs, MatchBootstrap.HumanPlayer);
+            _healthMax = w.Players[MatchBootstrap.HumanPlayer].OrganismHealthMax;
         }
 
         private int TerritoryPercent(int p) =>

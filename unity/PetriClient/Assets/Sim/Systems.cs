@@ -465,6 +465,10 @@ namespace Petri.Core
                             foe.OrganismHealth -= hpLoss < 1 ? 1 : hpLoss;
                             continue;
                         }
+                        // A manned front still bleeds the ORGANISM under sustained fire —
+                        // engagement always inflicts casualties on the body itself.
+                        int attrition = dmg / w.Rules.OverflowDamageDivisor;
+                        foe.OrganismHealth -= attrition < 1 ? 1 : attrition;
                         foe.FrontDamage[g] += dmg;
                         for (int d = 0; d < u && foe.FrontDamage[g] > 0; d++)
                         {
@@ -598,9 +602,11 @@ namespace Petri.Core
     }
 
     /// <summary>
-    /// ORGANISM HEALTH, each slow beat: the pool's ceiling grows with territory and finished
-    /// buildings, it regenerates slowly toward that ceiling, and an organism bled to zero
-    /// (overflow fire on empty fronts, cells torn away) is eliminated.
+    /// ORGANISM HEALTH, each slow beat: ONE living value. In peacetime the body swells in
+    /// lockstep with its growing ceiling (every new cell and finished building adds its
+    /// worth to health directly) and knits a little besides. The moment ANY front is
+    /// engaged, the climb stops cold — a fighting organism cannot grow stronger, only
+    /// bleed (combat attrition, unmanned-front fire, torn-away cells). Zero = elimination.
     /// </summary>
     public static class HealthSystem
     {
@@ -622,7 +628,17 @@ namespace Petri.Core
                 var pl = w.Players[p];
                 if (!pl.Alive) continue;
                 int max = MaxOf(w, defs, p);
-                pl.OrganismHealth += w.Rules.HealthRegenPerBeat;
+                int delta = max - pl.OrganismHealthMax;
+                pl.OrganismHealthMax = max;
+
+                bool engaged = false;
+                for (int f = 0; f < pl.FrontCount && !engaged; f++)
+                    engaged = w.ScratchFrontContested[p * SimConstants.MaxFronts + f];
+                if (!engaged)
+                {
+                    if (delta > 0) pl.OrganismHealth += delta;   // growth swells the body
+                    pl.OrganismHealth += w.Rules.HealthRegenPerBeat;
+                }
                 if (pl.OrganismHealth > max) pl.OrganismHealth = max;
                 if (pl.OrganismHealth <= 0) w.Eliminate(p);
             }

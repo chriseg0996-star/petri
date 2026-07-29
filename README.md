@@ -24,9 +24,11 @@ or by bleeding every rival organism's health to zero (losing your nucleus also k
 - **Breakthrough**: a contested front whose defenders are wiped BREAKS for 10 seconds —
   the units assigned to it have perished, and enemies flip cells through the gap at ×4
   while it reforms.
-- **Health**: one pool per organism; its ceiling grows with territory and finished
-  buildings and it regenerates slowly. Fire on unmanned fronts and every lost cell drain
-  it; zero = elimination.
+- **Health**: ONE living value per organism. In peacetime it swells in lockstep with its
+  growing ceiling (every new cell and finished building adds its worth on the spot) and
+  knits a little besides — but the moment any front is engaged the climb stops cold, and
+  combat bleeds the body: attrition under fire even on manned fronts, scorching on
+  unmanned ones, and 3 per torn-away cell. Zero = elimination.
 - **Buildings**: placed from the persistent bottom panel, only inside your own territory,
   and they build themselves. A building on a contested cell soaks enemy flips (40 damage
   each) until it falls — territory lost is buildings lost.
@@ -117,4 +119,4 @@ dotnet run --project src/Petri.Runner -- run-match --seed 7 --ticks 20000
 
 All four must pass before and after any change; `determinism` must print PASS for both the
 fresh rerun and the replay, and `run-match` must end with a winner. Balance reference:
-scripted matches decide around tick 5500 (petri-dish), 5700 (capillary), 5400 (agar-plate).
+scripted matches decide around tick 5500 (petri-dish), 5800 (capillary), 6300 (agar-plate).
