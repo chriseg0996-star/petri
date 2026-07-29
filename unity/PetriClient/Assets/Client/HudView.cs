@@ -49,6 +49,7 @@ namespace Petri.Client
         private int[] _terrCells;
         private int[] _forceTotals;
         private int[] _forcePerDef; // human only, summed across fronts
+        private int _healthMax;     // human organism's current health ceiling
 
         // Hover tooltip for build buttons: set while the mouse is over a building button,
         // drawn as a popup above the panel. Strictly stat-derived gameplay facts.
@@ -199,6 +200,7 @@ namespace Petri.Client
                 for (int f = 0; f < SimConstants.MaxFronts; f++) total += mine[f * u + d];
                 _forcePerDef[d] = total;
             }
+            _healthMax = HealthSystem.MaxOf(w, _match.Defs, MatchBootstrap.HumanPlayer);
         }
 
         private int TerritoryPercent(int p) =>
@@ -404,7 +406,35 @@ namespace Petri.Client
             else DrawOrganismCard(w, cardRect);
 
             DrawForceTable(defs, tableRect);
+            DrawFrontArrows(w);
             DrawBuildGrid(w, defs, input, primary);
+        }
+
+        /// <summary>The front-split control: ▲ splits the border into more fronts, ▼ merges
+        /// back down, stepping K through 4·6·8·12·20·40. Force redistributes evenly.</summary>
+        private void DrawFrontArrows(SimWorld w)
+        {
+            var pl = w.Players[MatchBootstrap.HumanPlayer];
+            float ax = _panelRect.x + 660, ay = _panelRect.y + 8;
+            GUI.Label(new Rect(ax, ay, 90, 18), "<b>Fronts</b>", _small);
+
+            int ix = System.Array.IndexOf(SimConstants.FrontCounts, (int)pl.FrontCount);
+            var oldBg = GUI.backgroundColor;
+            GUI.enabled = ix < SimConstants.FrontCounts.Length - 1;
+            if (GUI.Button(Hot(new Rect(ax, ay + 20, 44, 30)), "▲", _button) && GUI.enabled)
+                _match.Enqueue(new Command { Type = CommandType.SetFrontCount, A = SimConstants.FrontCounts[ix + 1] });
+            GUI.enabled = true;
+
+            var align = _header.alignment;
+            _header.alignment = TextAnchor.MiddleCenter;
+            GUI.Label(new Rect(ax, ay + 52, 44, 24), $"<b>{pl.FrontCount}</b>", _header);
+            _header.alignment = align;
+
+            GUI.enabled = ix > 0;
+            if (GUI.Button(Hot(new Rect(ax, ay + 78, 44, 30)), "▼", _button) && GUI.enabled)
+                _match.Enqueue(new Command { Type = CommandType.SetFrontCount, A = SimConstants.FrontCounts[ix - 1] });
+            GUI.enabled = true;
+            GUI.backgroundColor = oldBg;
         }
 
         /// <summary>Default left card: the superorganism's vitals.</summary>
@@ -413,10 +443,17 @@ namespace Petri.Client
             var pl = w.Players[MatchBootstrap.HumanPlayer];
             float y = r.y;
             GUI.Label(new Rect(r.x, y, r.width, 22), "Superorganism", _header);
-            y += 26;
+            y += 24;
+
+            // The organism's lifebar: its ceiling grows with territory and buildings.
+            float frac = _healthMax > 0 ? Mathf.Clamp01(pl.OrganismHealth / (float)_healthMax) : 0f;
+            Tint(new Rect(r.x, y, 300, 12), new Color(0.25f, 0.05f, 0.05f, 0.9f));
+            Tint(new Rect(r.x, y, 300 * frac, 12),
+                Color.Lerp(new Color(0.95f, 0.25f, 0.15f), new Color(0.2f, 0.85f, 0.35f), frac));
+            GUI.Label(new Rect(r.x + 306, y - 4, 140, 20), $"{pl.OrganismHealth} / {_healthMax}", _small);
+            y += 18;
 
             _sb.Length = 0;
-            _sb.Append($"Health <b>{pl.OrganismHealth}</b>\n");
             _sb.Append($"Territory <b>{TerritoryPercent(MatchBootstrap.HumanPlayer)}%</b> of the dish (win at 75%)\n");
             _sb.Append($"Workers <b>{pl.WorkerCount}</b> — each speeds growth and harvest\n");
             _sb.Append($"Fronts <b>{pl.FrontCount}</b> border sections\n");
@@ -437,16 +474,25 @@ namespace Petri.Client
             GUI.Label(new Rect(r.x, y, r.width, r.height - (y - r.y)), _sb.ToString(), _label);
         }
 
-        /// <summary>Middle column: what the organism's force is made of, by unit type.</summary>
+        /// <summary>Middle column: what the organism's force is made of, by unit type, with
+        /// a second column for the selected front's share.</summary>
         private void DrawForceTable(DefDatabase defs, Rect r)
         {
             var pl = _match.Sim.World.Players[MatchBootstrap.HumanPlayer];
+            int u = defs.Units.Length;
+            int sel = _match.Input != null ? _match.Input.SelectedFront : -1;
             _sb.Length = 0;
-            _sb.Append($"<b>Force</b>  ({_forceTotals[MatchBootstrap.HumanPlayer]})\n");
+            _sb.Append($"<b>Force</b>  ({_forceTotals[MatchBootstrap.HumanPlayer]})");
+            if (sel >= 0) _sb.Append($"   <color=#ffd94a>front {sel + 1}</color>");
+            _sb.Append('\n');
             _sb.Append($"{pl.WorkerCount} × Workers\n");
             for (int d = 0; d < _forcePerDef.Length; d++)
-                if (_forcePerDef[d] > 0)
-                    _sb.Append($"{_forcePerDef[d]} × {PrettyName(defs.Units[d].Id)}\n");
+            {
+                if (_forcePerDef[d] == 0) continue;
+                _sb.Append($"{_forcePerDef[d]} × {PrettyName(defs.Units[d].Id)}");
+                if (sel >= 0) _sb.Append($"   <color=#ffd94a>{pl.Force[sel * u + d]}</color>");
+                _sb.Append('\n');
+            }
             GUI.Label(r, _sb.ToString(), _label);
         }
 
