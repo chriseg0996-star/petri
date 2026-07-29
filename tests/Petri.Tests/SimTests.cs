@@ -1866,6 +1866,150 @@ namespace Petri.Tests
         }
     }
 
+    /// <summary>FrontMath sector classification and the front-state commands.</summary>
+    public class FrontGeometryTests
+    {
+        [Fact]
+        public void SectorPartitionCoversAllDirectionsForEveryK()
+        {
+            foreach (int k in SimConstants.FrontCounts)
+            {
+                var counts = new int[k];
+                // 720 directions around the circle: every one lands in exactly one sector.
+                for (int step = 0; step < 720; step++)
+                {
+                    double a = step * System.Math.PI / 360.0;
+                    long dx = (long)(System.Math.Cos(a) * 100000);
+                    long dy = (long)(System.Math.Sin(a) * 100000);
+                    int s = FrontMath.Sector(k, dx, dy);
+                    Assert.InRange(s, 0, k - 1);
+                    counts[s]++;
+                }
+                // Equal wedges: each sector catches 720/k directions, within table rounding.
+                for (int s = 0; s < k; s++)
+                    Assert.InRange(counts[s], 720 / k - 2, 720 / k + 2);
+            }
+        }
+
+        [Fact]
+        public void SectorZeroIsCenteredEast()
+        {
+            foreach (int k in SimConstants.FrontCounts)
+                Assert.Equal(0, FrontMath.Sector(k, 1000, 0)); // due east for every K
+            Assert.Equal(1, FrontMath.Sector(4, 0, 1000));  // north
+            Assert.Equal(2, FrontMath.Sector(4, -1000, 0)); // west
+            Assert.Equal(3, FrontMath.Sector(4, 0, -1000)); // south
+        }
+
+        [Fact]
+        public void SectorClassificationIsDeterministicAtBoundaries()
+        {
+            // Exactly on a boundary ray: the same sector every time, twice.
+            foreach (int k in SimConstants.FrontCounts)
+            {
+                int a = FrontMath.Sector(k, 707, 707);
+                int b = FrontMath.Sector(k, 707, 707);
+                Assert.Equal(a, b);
+                Assert.Equal(0, FrontMath.Sector(k, 0, 0)); // degenerate → sector 0
+            }
+        }
+    }
+
+    public class FrontCommandTests
+    {
+        [Fact]
+        public void SetFrontCountRedistributesPreservingTotals()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            var pl = w.Players[0];
+            int u = w.UnitDefCount;
+            // Hand-load 10 soldiers on front 0 and 3 on front 2 (K=4 default).
+            pl.Force[0 * u + 1] = 10;
+            pl.Force[2 * u + 1] = 3;
+            pl.FrontDamage[0] = 55;
+            pl.FrontPushX[1] = 500; pl.FrontPushY[1] = 500;
+
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetFrontCount, A = 6 });
+            Assert.Equal(0, w.RejectedCommands);
+            Assert.Equal(6, (int)pl.FrontCount);
+            int total = 0;
+            for (int f = 0; f < SimConstants.MaxFronts; f++) total += pl.Force[f * u + 1];
+            Assert.Equal(13, total); // per-def totals preserved
+            Assert.Equal(3, pl.Force[0 * u + 1]); // 13/6 = 2 rem 1 → low front gets the extra
+            Assert.Equal(2, pl.Force[5 * u + 1]);
+            Assert.Equal(0, pl.FrontDamage[0]);   // damage/broken/pushes reset
+            Assert.Equal(-1, pl.FrontPushX[1]);
+
+            // Illegal K rejects; same K rejects.
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetFrontCount, A = 7 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.SetFrontCount, A = 6 });
+            Assert.Equal(2, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void PushAndStopFrontValidateAndStoreTargets()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            var pl = w.Players[0];
+
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.PushFront, A = 2, B = 3000, C = 1000 });
+            Assert.Equal(0, w.RejectedCommands);
+            Assert.Equal(3000, pl.FrontPushX[2]);
+            Assert.Equal(1000, pl.FrontPushY[2]);
+
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.StopFront, A = 2 });
+            Assert.Equal(-1, pl.FrontPushX[2]);
+
+            // Front index >= K rejects (K = 4 by default).
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.PushFront, A = 4, B = 100, C = 100 });
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.StopFront, A = -1 });
+            Assert.Equal(2, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void RallyProductionValidatesOwnershipAndProducer()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int hq0 = WorkerSystem.FindHq(w, sim.Defs, 0);
+            int hq1 = WorkerSystem.FindHq(w, sim.Defs, 1);
+
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.RallyProduction, A = hq0, B = 3 });
+            Assert.Equal(0, w.RejectedCommands);
+            Assert.Equal(3, (int)w.RallyFront[hq0]);
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.RallyProduction, A = hq0, B = -1 });
+            Assert.Equal(-1, (int)w.RallyFront[hq0]);
+
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.RallyProduction, A = hq1, B = 0 });  // not yours
+            CommandSystem.Apply(w, sim.Defs, new Command { Tick = 0, Player = 0, Type = CommandType.RallyProduction, A = hq0, B = 40 }); // >= MaxFronts
+            Assert.Equal(2, w.RejectedCommands);
+        }
+
+        [Fact]
+        public void RedeployFlowsForceTowardEmptyFrontsAtMoveSpeedRate()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            var pl = w.Players[0];
+            int u = w.UnitDefCount;
+            pl.Force[0 * u + 1] = 12; // 12 soldiers piled on front 0, K = 4, nothing contested
+
+            FrontSystem.Tick(w, sim.Defs);
+            // test.soldier moveSpeed 200 → max(1, 200/100) = 2 transfers on the first beat.
+            int total = 0, moved = 0;
+            for (int f = 0; f < 4; f++) total += pl.Force[f * u + 1];
+            moved = total - pl.Force[0 * u + 1];
+            Assert.Equal(12, total);
+            Assert.Equal(2, moved);
+
+            for (int t = 0; t < 12; t++) FrontSystem.Tick(w, sim.Defs);
+            // Long run: force settles even (3/3/3/3).
+            for (int f = 0; f < 4; f++) Assert.Equal(3, pl.Force[f * u + 1]);
+        }
+    }
+
     /// <summary>Immovable terrain walls: map-defined circles that units cannot cross and
     /// buildings cannot stand on — chokepoints without a pathfinder.</summary>
     public class TerrainTests

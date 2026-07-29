@@ -20,6 +20,7 @@ namespace Petri.Client
         {
             public int maxEntities, startingFood, startingWorkers, nodeRadiusCenti;
             public int growthBeatTicks, growthBasePerBeat, growthWorkerDivisor, startRadiusCells;
+            public int defaultFrontCount, redeploySpeedDivisor;
             public int leaderAuraBonusNum, leaderAuraBonusDen, leaderAuraRadiusCenti;
             public int frontArcCosNum, frontArcCosDen, rearArcCosNum, rearArcCosDen;
             public int sideDamageNum, sideDamageDen, rearDamageNum, rearDamageDen;
@@ -139,6 +140,8 @@ namespace Petri.Client
             GrowthBasePerBeat = d.growthBasePerBeat > 0 ? d.growthBasePerBeat : 2,
             GrowthWorkerDivisor = d.growthWorkerDivisor > 0 ? d.growthWorkerDivisor : 3,
             StartRadiusCells = d.startRadiusCells > 0 ? d.startRadiusCells : 3,
+            DefaultFrontCount = d.defaultFrontCount > 0 ? d.defaultFrontCount : 4,
+            RedeploySpeedDivisor = d.redeploySpeedDivisor > 0 ? d.redeploySpeedDivisor : 100,
             LeaderAuraBonusNum = d.leaderAuraBonusNum > 0 ? d.leaderAuraBonusNum : 5,
             LeaderAuraBonusDen = d.leaderAuraBonusDen > 0 ? d.leaderAuraBonusDen : 4,
             LeaderAuraRadiusCenti = d.leaderAuraRadiusCenti > 0 ? d.leaderAuraRadiusCenti : 600,

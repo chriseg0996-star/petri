@@ -139,6 +139,101 @@ namespace Petri.Core
     }
 
     /// <summary>
+    /// FRONTS: each organism's border divides into K equal angular sectors around its
+    /// centroid (FrontMath). Per beat this system recomputes the geometry (centroids,
+    /// per-cell sectors, which sectors touch an enemy) into scratch, then REDEPLOYS force:
+    /// per unit def, up to moveSpeed/RedeploySpeedDivisor transfers flow from the fullest
+    /// front toward the emptiest eligible front (contested fronts first) — fast units
+    /// answer a probe quicker than slow ones. Combat lands in a later pass.
+    /// </summary>
+    public static class FrontSystem
+    {
+        public static void Tick(SimWorld w, DefDatabase defs)
+        {
+            int cells = w.CellCount;
+            if (cells == 0) return;
+            int cx0 = w.TerritoryCellsX;
+            int players = w.Players.Length;
+            Array.Clear(w.ScratchFrontContested, 0, w.ScratchFrontContested.Length);
+            Array.Clear(w.ScratchCentSumX, 0, players);
+            Array.Clear(w.ScratchCentSumY, 0, players);
+            Array.Clear(w.ScratchCentCount, 0, players);
+
+            // Pass 1: centroids (long sums of cell coords).
+            for (int c = 0; c < cells; c++)
+            {
+                byte o = w.Territory[c];
+                if (o >= players) continue;
+                w.ScratchCentSumX[o] += c % cx0;
+                w.ScratchCentSumY[o] += c / cx0;
+                w.ScratchCentCount[o]++;
+            }
+            for (int p = 0; p < players; p++)
+            {
+                int n = w.ScratchCentCount[p];
+                if (n == 0) continue;
+                w.ScratchCentXCenti[p] = (int)(w.ScratchCentSumX[p] * SimWorld.CellCenti / n) + SimWorld.CellCenti / 2;
+                w.ScratchCentYCenti[p] = (int)(w.ScratchCentSumY[p] * SimWorld.CellCenti / n) + SimWorld.CellCenti / 2;
+            }
+
+            // Pass 2: sector of every owned cell under its owner + contested flags where a
+            // border cell touches an enemy cell (E/W/N/S).
+            for (int c = 0; c < cells; c++)
+            {
+                byte o = w.Territory[c];
+                if (o >= players) { w.ScratchCellSector[c] = 0; continue; }
+                int x = c % cx0, y = c / cx0;
+                w.CellCenterCenti(c, out int ccx, out int ccy);
+                int sector = FrontMath.Sector(w.Players[o].FrontCount,
+                    ccx - w.ScratchCentXCenti[o], ccy - w.ScratchCentYCenti[o]);
+                w.ScratchCellSector[c] = (byte)sector;
+
+                bool enemyAdj =
+                    (x > 0 && IsEnemyCell(w, o, w.Territory[c - 1]))
+                    || (x < cx0 - 1 && IsEnemyCell(w, o, w.Territory[c + 1]))
+                    || (y > 0 && IsEnemyCell(w, o, w.Territory[c - cx0]))
+                    || (y < w.TerritoryCellsY - 1 && IsEnemyCell(w, o, w.Territory[c + cx0]));
+                if (enemyAdj) w.ScratchFrontContested[o * SimConstants.MaxFronts + sector] = true;
+            }
+
+            // Pass 3: redeploy — per def, transfers/beat = max(1, moveSpeed/divisor), from
+            // the fullest front to the emptiest eligible front until spread <= 1.
+            int u = w.UnitDefCount;
+            for (int p = 0; p < players; p++)
+            {
+                var pl = w.Players[p];
+                if (!pl.Alive) continue;
+                int k = pl.FrontCount;
+                bool anyContested = false;
+                for (int f = 0; f < k; f++)
+                    if (w.ScratchFrontContested[p * SimConstants.MaxFronts + f]) { anyContested = true; break; }
+
+                for (int d = 0; d < u; d++)
+                {
+                    int moves = System.Math.Max(1, defs.Units[d].MoveSpeedCenti / w.Rules.RedeploySpeedDivisor);
+                    for (int m = 0; m < moves; m++)
+                    {
+                        int src = 0, dst = -1;
+                        for (int f = 1; f < k; f++)
+                            if (pl.Force[f * u + d] > pl.Force[src * u + d]) src = f;
+                        for (int f = 0; f < k; f++)
+                        {
+                            if (anyContested && !w.ScratchFrontContested[p * SimConstants.MaxFronts + f]) continue;
+                            if (dst < 0 || pl.Force[f * u + d] < pl.Force[dst * u + d]) dst = f;
+                        }
+                        if (dst < 0 || src == dst || pl.Force[src * u + d] - pl.Force[dst * u + d] < 2) break;
+                        pl.Force[src * u + d]--;
+                        pl.Force[dst * u + d]++;
+                    }
+                }
+            }
+        }
+
+        private static bool IsEnemyCell(SimWorld w, byte owner, byte other) =>
+            other < w.Players.Length && w.AreEnemies(owner, other);
+    }
+
+    /// <summary>
     /// The leader's command aura: friendly units standing within Rules.LeaderAuraRadiusCenti
     /// of a live, same-owner leader deal Rules.LeaderAuraBonus damage. Derived per-tick
     /// scratch (like ScratchAttackBonus): recomputed from hashed positions after movement,

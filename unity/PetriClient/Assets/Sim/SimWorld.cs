@@ -27,6 +27,16 @@ namespace Petri.Core
         public int[] ProductionWeights = System.Array.Empty<int>(); // per unit dense index
         public int SupplyPriority = 50; // 0 = all workers keep the core; 100 = max caravans to the front
         public byte[] UpgradeLevels = System.Array.Empty<byte>();   // per upgrade dense index, 0/1
+
+        // ---- SUPERORGANISM state (all hashed; zeroed on elimination).
+        public int WorkerCount;            // workers are a count, not entities (post-cutover)
+        public byte FrontCount;            // K, one of SimConstants.FrontCounts
+        public int OrganismHealth;         // the organism's shared health pool
+        public int[] Force = System.Array.Empty<int>();          // [MaxFronts * unitDefCount]
+        public int[] FrontDamage = System.Array.Empty<int>();    // [MaxFronts] accumulated damage
+        public int[] FrontBrokenTicks = System.Array.Empty<int>(); // [MaxFronts] breakthrough window
+        public int[] FrontPushX = System.Array.Empty<int>();     // [MaxFronts] push target centi, -1 none
+        public int[] FrontPushY = System.Array.Empty<int>();
     }
 
     /// <summary>
@@ -84,6 +94,7 @@ namespace Petri.Core
         public readonly byte[] Dial;            // per-entity 0..100 tuning dial (UI slider); reserved
                                                 //   for future per-entity modifiers, hashed already
         public readonly FixVec2[] Facing;       // unit body facing (directional damage reads it)
+        public readonly short[] RallyFront;     // building: front its produced units join, -1 = auto
         public readonly int[] Generation;       // per-slot version, bumped each Spawn — (index,gen)
                                                 //   is a stable identity the UI uses for control groups
         public int HighWater;
@@ -120,6 +131,11 @@ namespace Petri.Core
         public int ScratchNodeCount, ScratchDropoffCount, ScratchWorkerCount, ScratchCacheCount;
         public readonly int[] ScratchQueue;     // BFS queue for SupplySystem; leader list for LeaderAuraSystem
         public readonly bool[] ScratchLeaderAura; // unit: inside a friendly leader's aura this tick
+        public readonly bool[] ScratchFrontContested; // [player * MaxFronts]: sector borders an enemy this beat
+        public byte[] ScratchCellSector = System.Array.Empty<byte>(); // owned cell → sector under its owner
+        public readonly long[] ScratchCentSumX, ScratchCentSumY; // per-player centroid accumulation
+        public readonly int[] ScratchCentCount;
+        public readonly int[] ScratchCentXCenti, ScratchCentYCenti; // per-player centroid (centi)
 
         // Immovable terrain from the map (walls/rocks). Static for the whole match and
         // identical on every peer (map data, covered by DefsHash) — deliberately NOT hashed
@@ -200,8 +216,15 @@ namespace Petri.Core
             CaravanCache = new int[cap];
             Dial = new byte[cap];
             Facing = new FixVec2[cap];
+            RallyFront = new short[cap];
             Generation = new int[cap];
             ScratchUnitCounts = new int[playerCount * unitDefCount];
+            ScratchFrontContested = new bool[playerCount * SimConstants.MaxFronts];
+            ScratchCentSumX = new long[playerCount];
+            ScratchCentSumY = new long[playerCount];
+            ScratchCentCount = new int[playerCount];
+            ScratchCentXCenti = new int[playerCount];
+            ScratchCentYCenti = new int[playerCount];
             GridCellsX = System.Math.Max(1, (int)(mapWidth.Raw >> GridShift) + 1);
             GridCellsY = System.Math.Max(1, (int)(mapHeight.Raw >> GridShift) + 1);
             GridHead = new int[GridCellsX * GridCellsY];
@@ -222,13 +245,26 @@ namespace Petri.Core
 
             Players = new PlayerState[playerCount];
             for (int p = 0; p < playerCount; p++)
+            {
                 Players[p] = new PlayerState
                 {
                     Alive = true,
                     Team = (byte)p, // default: everyone on their own team (free-for-all)
                     ProductionWeights = new int[unitDefCount],
                     UpgradeLevels = new byte[upgradeCount],
+                    FrontCount = (byte)rules.DefaultFrontCount,
+                    Force = new int[SimConstants.MaxFronts * unitDefCount],
+                    FrontDamage = new int[SimConstants.MaxFronts],
+                    FrontBrokenTicks = new int[SimConstants.MaxFronts],
+                    FrontPushX = new int[SimConstants.MaxFronts],
+                    FrontPushY = new int[SimConstants.MaxFronts],
                 };
+                for (int f = 0; f < SimConstants.MaxFronts; f++)
+                {
+                    Players[p].FrontPushX[f] = -1;
+                    Players[p].FrontPushY[f] = -1;
+                }
+            }
         }
 
         /// <summary>Lowest-free-index spawn; resets EVERY per-entity field (iron rule).</summary>
@@ -267,6 +303,7 @@ namespace Petri.Core
                 CaravanCache[i] = -1;
                 Dial[i] = 50;
                 Facing[i] = new FixVec2(Fix.One, Fix.Zero);
+                RallyFront[i] = -1;
                 Generation[i]++; // new occupant of this slot — never reset, only advances
                 if (i >= HighWater) HighWater = i + 1;
                 return i;

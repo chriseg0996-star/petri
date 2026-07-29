@@ -102,6 +102,8 @@ namespace Petri.Core
                 GrowthBasePerBeat = GetInt(r, "growthBasePerBeat", 2),
                 GrowthWorkerDivisor = GetInt(r, "growthWorkerDivisor", 3),
                 StartRadiusCells = GetInt(r, "startRadiusCells", 3),
+                DefaultFrontCount = GetInt(r, "defaultFrontCount", 4),
+                RedeploySpeedDivisor = GetInt(r, "redeploySpeedDivisor", 100),
                 LeaderAuraBonusNum = GetInt(r, "leaderAuraBonusNum", 5),
                 LeaderAuraBonusDen = GetInt(r, "leaderAuraBonusDen", 4),
                 LeaderAuraRadiusCenti = GetInt(r, "leaderAuraRadiusCenti", 600),

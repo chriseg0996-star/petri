@@ -33,7 +33,11 @@ namespace Petri.Core
                 _cursor++;
             }
             ProductionSystem.Tick(World, Defs);
-            if (World.TickCount % Defs.Rules.GrowthBeatTicks == 0) GrowthSystem.Tick(World, Defs);
+            if (World.TickCount % Defs.Rules.GrowthBeatTicks == 0)
+            {
+                GrowthSystem.Tick(World, Defs);
+                FrontSystem.Tick(World, Defs);
+            }
             WorkerSystem.Tick(World, Defs);
             MovementSystem.Tick(World, Defs);
             CollisionSystem.Tick(World, Defs);
@@ -116,6 +120,18 @@ namespace Petri.Core
                 Mix((ulong)pl.SupplyPriority);
                 for (int k = 0; k < pl.ProductionWeights.Length; k++) Mix((ulong)pl.ProductionWeights[k]);
                 for (int k = 0; k < pl.UpgradeLevels.Length; k++) Mix(pl.UpgradeLevels[k]);
+                // Superorganism block.
+                Mix((ulong)pl.WorkerCount);
+                Mix(pl.FrontCount);
+                Mix((ulong)pl.OrganismHealth);
+                for (int k = 0; k < pl.Force.Length; k++) Mix((ulong)pl.Force[k]);
+                for (int k = 0; k < SimConstants.MaxFronts; k++)
+                {
+                    Mix((ulong)pl.FrontDamage[k]);
+                    Mix((ulong)pl.FrontBrokenTicks[k]);
+                    Mix((ulong)pl.FrontPushX[k]);
+                    Mix((ulong)pl.FrontPushY[k]);
+                }
             }
 
             for (int i = 0; i < w.HighWater; i++)
@@ -163,6 +179,7 @@ namespace Petri.Core
                 Mix(w.Dial[i]);
                 Mix((ulong)w.Facing[i].X.Raw);
                 Mix((ulong)w.Facing[i].Y.Raw);
+                Mix((ulong)w.RallyFront[i]);
                 Mix((ulong)w.Generation[i]);
             }
             return h;
@@ -202,6 +219,7 @@ namespace Petri.Core
             int cells = w.TerritoryCellsX * w.TerritoryCellsY;
             w.Territory = new byte[cells];
             w.TerritoryBlocked = new bool[cells];
+            w.ScratchCellSector = new byte[cells];
             for (int c = 0; c < cells; c++)
             {
                 w.Territory[c] = SimWorld.NeutralOwner;

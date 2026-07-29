@@ -7,6 +7,11 @@ namespace Petri.Core
     {
         public const int TicksPerSecond = 20;
 
+        // Superorganism fronts: the border splits into K equal angular sectors; players
+        // step K through this ladder (arrow buttons). MaxFronts sizes every per-front array.
+        public const int MaxFronts = 40;
+        public static readonly int[] FrontCounts = { 4, 6, 8, 12, 20, 40 };
+
         // Shift-queued orders: waypoints held per unit, started one by one as each order
         // completes. Kinds mirror the command that was queued.
         // Byte 3 is RESERVED (was OrderFormationMove) — old logs may carry it.
@@ -28,6 +33,8 @@ namespace Petri.Core
         public int GrowthBasePerBeat = 2;
         public int GrowthWorkerDivisor = 3;
         public int StartRadiusCells = 3;   // starting blob radius around the spawn cell
+        public int DefaultFrontCount = 4;  // organisms start with four fronts (E/N/W/S)
+        public int RedeploySpeedDivisor = 100; // per-def transfers/beat = max(1, moveSpeed/this)
         // The leader's command aura: friendly units within the radius of a live same-owner
         // leader deal Num/Den damage (5/4 = +25%). The bonus does not stack.
         public int LeaderAuraBonusNum = 5;

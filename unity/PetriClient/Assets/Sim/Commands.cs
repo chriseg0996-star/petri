@@ -28,6 +28,12 @@ namespace Petri.Core
         UpgradeCache = 20,       // A = supply cache: buy the next tier (2x stock/HP, 1/2 drain, armed)
         BuyUpgrade = 21,         // A = upgrade dense index: purchase a tech-path upgrade
         BuildProng = 22,         // A = headquarters entity, B = hub-built building dense index
+        // ---- Superorganism commands.
+        SetFrontCount = 24,      // A = new K (must be one of SimConstants.FrontCounts);
+                                 //   force redistributes evenly, damage/broken/pushes reset
+        RallyProduction = 25,    // A = producing building, B = front index or -1 = auto
+        PushFront = 26,          // A = front index (< K), B = xCenti, C = yCenti target
+        StopFront = 27,          // A = front index (< K): cancel its push
     }
 
     /// <summary>
@@ -276,6 +282,61 @@ namespace Petri.Core
                     if (!IsOwnedUnit(w, c.A, c.Player) && !IsOwnedBuilding(w, c.A, c.Player)) { Reject(w); return; }
                     if (c.B < 0 || c.B > 100) { Reject(w); return; }
                     w.Dial[c.A] = (byte)c.B;
+                    return;
+                }
+                case CommandType.SetFrontCount:
+                {
+                    // Change the border partition. Per unit def, the total assigned force is
+                    // redistributed evenly across the new K (remainder on the low fronts);
+                    // damage pools, breakthrough windows, and pushes reset — the line reforms.
+                    var pl = w.Players[c.Player];
+                    if (FrontMath.KIndex(c.A) < 0 || c.A == pl.FrontCount) { Reject(w); return; }
+                    int u = w.UnitDefCount;
+                    for (int d = 0; d < u; d++)
+                    {
+                        int total = 0;
+                        for (int f = 0; f < SimConstants.MaxFronts; f++)
+                        {
+                            total += pl.Force[f * u + d];
+                            pl.Force[f * u + d] = 0;
+                        }
+                        int share = total / c.A, rem = total % c.A;
+                        for (int f = 0; f < c.A; f++)
+                            pl.Force[f * u + d] = share + (f < rem ? 1 : 0);
+                    }
+                    for (int f = 0; f < SimConstants.MaxFronts; f++)
+                    {
+                        pl.FrontDamage[f] = 0;
+                        pl.FrontBrokenTicks[f] = 0;
+                        pl.FrontPushX[f] = -1;
+                        pl.FrontPushY[f] = -1;
+                    }
+                    pl.FrontCount = (byte)c.A;
+                    return;
+                }
+                case CommandType.RallyProduction:
+                {
+                    if (!IsOwnedBuilding(w, c.A, c.Player)) { Reject(w); return; }
+                    if (defs.Buildings[w.DefIndex[c.A]].ProducesDense.Length == 0) { Reject(w); return; }
+                    if (c.B < -1 || c.B >= SimConstants.MaxFronts) { Reject(w); return; }
+                    w.RallyFront[c.A] = (short)c.B;
+                    return;
+                }
+                case CommandType.PushFront:
+                {
+                    var pl = w.Players[c.Player];
+                    if (c.A < 0 || c.A >= pl.FrontCount) { Reject(w); return; }
+                    var target = w.ClampToMap(new FixVec2(Fix.Ratio(c.B, 100), Fix.Ratio(c.C, 100)));
+                    pl.FrontPushX[c.A] = (int)((long)target.X.Raw * 100 / Fix.OneRaw);
+                    pl.FrontPushY[c.A] = (int)((long)target.Y.Raw * 100 / Fix.OneRaw);
+                    return;
+                }
+                case CommandType.StopFront:
+                {
+                    var pl = w.Players[c.Player];
+                    if (c.A < 0 || c.A >= pl.FrontCount) { Reject(w); return; }
+                    pl.FrontPushX[c.A] = -1;
+                    pl.FrontPushY[c.A] = -1;
                     return;
                 }
                 default:
