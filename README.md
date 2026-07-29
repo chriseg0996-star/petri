@@ -1,8 +1,35 @@
-# Petri — deterministic microbial RTS (clean rebuild)
+# Petri — deterministic territorial superorganism RTS
 
-A brand-new game, fully independent of the Colony Wars code elsewhere in this repo: its own
-solution, its own data set, its own runner and tests. Nothing here references or is referenced
-by the old game.
+Each player IS one bacterial superorganism on a petri dish. It starts as a small blob
+around its nucleus, grows outward on its own, and passively mines the resource nodes it
+engulfs. Units are produced from buildings but are never individual entities — they join
+the organism's **Force** as counts assigned to **fronts** (equal angular sections of the
+border), where they hold ground, trade fire, and push. Win by holding **75% of the dish**
+or by bleeding every rival organism's health to zero (losing your nucleus also kills you).
+
+## How it plays
+
+- **Growth**: the organism claims adjacent free cells every beat; workers (a pooled count)
+  speed both growth and the passive harvest of engulfed nutrient/mineral nodes.
+- **Fronts**: the border splits into K equal sectors around the organism's centroid,
+  K ∈ {4, 6, 8, 12, 20, 40}, stepped by the ▲/▼ panel buttons (force redistributes evenly).
+  New units auto-assign to the emptiest front unless their producer is rallied; force
+  re-deploys between fronts at each unit type's move speed.
+- **Combat** (the heart of the game): where borders touch, fronts exchange fire from a
+  role triangle — **melee attack = push power, ranged attack = defensive fire, HP = hold,
+  move speed = redeploy rate**; armed buildings garrison their sector. Damage pools per
+  defending front and kills pay the killer evolution points + a food bounty. Only a
+  **pushing** front takes cells, and only where its push beats the defenders' hold — probe
+  for the weak sector, don't slam the strong one.
+- **Breakthrough**: a contested front whose defenders are wiped BREAKS for 10 seconds —
+  the units assigned to it have perished, and enemies flip cells through the gap at ×4
+  while it reforms.
+- **Health**: one pool per organism; its ceiling grows with territory and finished
+  buildings and it regenerates slowly. Fire on unmanned fronts and every lost cell drain
+  it; zero = elimination.
+- **Buildings**: placed from the persistent bottom panel, only inside your own territory,
+  and they build themselves. A building on a contested cell soaks enemy flips (40 damage
+  each) until it falls — territory lost is buildings lost.
 
 ## Layout
 
@@ -12,13 +39,13 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
 
 | Path | What |
 |---|---|
-| `unity/PetriClient/Assets/Sim` | Engine-free deterministic sim: fixed-point math, defs, world, commands, systems. Compiled by Unity (asmdef `Petri.Sim`, no engine refs) and globbed by the headless build. |
-| `unity/PetriClient/Assets/Client` | Unity view layer (asmdef `Petri.Client`): data loader, 20 Hz tick driver, sprite renderer, camera, input→commands, HUD. |
-| `unity/PetriClient/Assets/StreamingAssets/Data` | The JSON dataset the Unity client loads (copy of `data/`). |
+| `unity/PetriClient/Assets/Sim` | Engine-free deterministic sim: fixed-point math, defs, territory grid, front math, commands, systems, bot. Compiled by Unity (asmdef `Petri.Sim`, no engine refs) and globbed by the headless build. |
+| `unity/PetriClient/Assets/Client` | Unity view layer (asmdef `Petri.Client`): data loader, 20 Hz tick driver, territory/fog renderer, camera, input→commands, HUD. |
+| `unity/PetriClient/Assets/StreamingAssets/Data` | The JSON dataset the Unity client loads (byte-identical copy of `data/`). |
 | `src/Petri.Core` | Headless build: source-globs `Assets/Sim` + `DefLoader` (System.Text.Json, headless-only). |
 | `src/Petri.Runner` | Headless CLI: `run-match`, `determinism`. |
-| `tests/Petri.Tests` | xunit suite (math, determinism, commands, spawn reuse, data validation). |
-| `data/` | Master JSON dataset used by the headless runner/tests. Mirror into StreamingAssets after edits. |
+| `tests/Petri.Tests` | xunit suite (math, determinism, territory, fronts, combat, breakthrough, health, victory, bot, data validation). |
+| `data/` | Master JSON dataset used by the headless runner/tests. Mirror into StreamingAssets after edits (copy, never retype). |
 
 ## Running the Unity client
 
@@ -27,82 +54,65 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
 2. Press **Play**. The main menu builds itself from code (`MainMenu` via
    `RuntimeInitializeOnLoadMethod`) — no scene wiring. **Skirmish** (map + seed) starts a match;
    matches end with a victory banner back to the menu.
-3. Controls (classic RTS — every unit obeys direct orders): **L-click/drag** select
-   (dbl-click = all of type, **Space** = all military) · **R-click** move/rally/attack
-   (multi-unit moves land in a spread grid centered on the click) · **R-drag** formation
-   line (a rank block centered on the drawn curve — line length sets the frontage, down to
-   two ranks; melee front, ranged rear, leaders spread evenly along the line itself) ·
-   **Shift+R-drag** set facing · **[A]** attack-move ·
-   **Ctrl+[1-9]/[1-9]** control groups · **[B]** build · **[S]** stop ·
-   **arrows** or **middle-drag** pan · **scroll** zoom.
+3. Controls: **L-click** your border to select a **front** (the wedge lifts white; labels
+   ride the border — gold = pushing, red pulse = broken) · **R-click-drag** sketch a push
+   path; release orders the push at its end · **[S]** stop the selected front's push ·
+   **L-click** buildings/nodes to inspect · with a producer selected, **R-click** a sector
+   to rally its output there, **[R]** back to auto · build from the persistent bottom
+   panel (ghost green = legal, own territory only) · **▲/▼** split/merge fronts ·
+   **Esc** deselect/cancel · **arrows**/**middle-drag** pan · **scroll** zoom ·
+   minimap **L-press** pans.
 
 If mouse/keyboard do nothing, set **Edit ▸ Project Settings ▸ Player ▸ Active Input Handling**
 to *Input Manager (Old)* or *Both* — the client uses the legacy `UnityEngine.Input` API.
-The view is a pure projection of sim state and never writes back; sprites are generated at
-runtime, so authored C&C-style art drops in later by swapping them per def id.
+The view is a pure projection of sim state and never writes back; sprites and the territory
+overlay are generated at runtime.
 
 ## Iron rules (same discipline as any lockstep RTS)
 
-1. **Fixed-point only** (`Fix`, Q16.16) in sim code — no float/double/`System.Random`/LINQ in ticks.
+1. **Fixed-point / integer only** in sim code — no float/double/`System.Random`/LINQ in ticks.
+   Territory, fronts, and combat are pure integer math (hardcoded sector ray tables,
+   cross-product classification, single-floor formulas).
 2. **Everything mutates through Commands** (`CommandLog` → `CommandSystem`). Invalid commands
-   reject and change nothing. UI/replays/network peers are all just command sources.
-3. **Index-order scans only** — never enumerate a Dictionary/HashSet in tick code.
-4. **New persistent state joins `Simulation.StateHash()` AND is reset in `SimWorld.Spawn()`.**
-5. Distances/rates in JSON are integer centi-units and ticks (20 ticks/second).
+   reject and change nothing. UI/replays/network peers/the bot are all just command sources.
+   Retired command ids (1, 2, 4, 5, 7, 10, 11-23) reject forever and are never reused.
+3. **Index-order scans only** — never enumerate a Dictionary/HashSet in tick code; ordered
+   candidate lists use capped per-world scratch buffers with stable insertion sorts.
+4. **New persistent state joins `Simulation.StateHash()` AND is reset** (`SimWorld.Spawn()`
+   for entity fields, `Eliminate()` for the per-player superorganism block).
+5. Distances/rates in JSON are integer centi-units and ticks (20 ticks/second); the
+   territory grid is 2u cells, hashed per cell.
 
-## Implemented so far
+## Implemented
 
+- Territory grid with seeded start blobs, beat-driven isotropic growth, and push-directed
+  expansion; walls block cells (all three shipped maps are symmetric).
+- Front partition via shared integer ray tables (`FrontMath`) — sim, bot, and client all
+  classify with the same cross-product convention.
+- Front combat: contact discovery, frozen role-triangle stats, damage pools, kill bounties,
+  breakthrough windows, building flip-soak, organism health, dual victory paths
+  (75% territory / health elimination / nucleus capture).
+- Production as counts with weights, overrides, pause, and per-front rally; passive
+  worker-scaled harvest; self-building construction from the panel.
+- Skirmish bot: economy weights, build ladder, and disciplined front pushes at the weakest
+  contacted sector (stops losing pushes, holds during its own breakthroughs).
+- Unity client: runtime territory overlay with contested shimmer, fog of war stamped from
+  territory, fronts UI, persistent build/info HUD, minimap with territory wash.
 - Deterministic tick loop with FNV-1a world fingerprint; replay = re-fed command log.
-- Data-driven unit/building defs (pure-integer JSON).
-- Automated weighted production (players set composition, buildings build on their own);
-  fresh units walk to the rally point and await orders.
-- Worker economy: gather from nodes, haul to headquarters.
-- Movement, hard-body collision with push-resistance-weighted separation, auto-engage combat,
-  HQ-death elimination.
-- **Terrain walls**: maps carry immovable circular walls (`"walls": [{x, y, r}]`) that shape
-  chokepoints and flanking routes — units slide around them, buildings refuse to stand on
-  them. Static map data (never sim state, hashed via DefsHash); all three shipped maps have
-  symmetric layouts. Every unit and building type wears a distinct runtime-generated 2D
-  silhouette; double-click selects all of a type (units and buildings alike).
-- **Strategic buildings**: building weapons and drop-offs are pure def data (`attackDamage`
-  etc., `isDropoff`). Five constructibles layer the midgame: spike-battery (turret, costs
-  minerals), burrow-node (expansion drop-off — pair with a spire for supply), brood-sac
-  (buds free mites; each squashed mite still feeds the enemy 1 evo), chitin-rampart (cheap
-  900 HP wall plug), plasmid-reliquary (40 evo, +3 army attack, fragile raid target;
-  mutagen-pool rebalanced to 15 evo as the durable small buff).
-- **Classic per-unit control**: every unit obeys direct Move / AttackMove / Stop /
-  SetFacing — no control layer between the player and their units. Multi-unit right-clicks
-  spread into a compact grid centered on the click; right-drag lays the selection along a
-  drawn line. The swarm-era command ids (4, 5, 11-15, 23) are retired and reserved (they
-  Reject), never to be reused.
-- **Leader aura**: the swarm-leader unit survives as a force multiplier, not a control
-  handle — friendly units within `leaderAuraRadiusCenti` (6u) of a live same-owner leader
-  deal `leaderAuraBonus` (+25%) damage. Derived per-tick scratch (LeaderAuraSystem), never
-  hashed; selected leaders draw their aura ring.
-- **Combat**: attack-move (advance, divert to engage; plain moves never chase),
-  DIRECTIONAL damage (front ×1 / side ×1.25 / rear ×1.5 vs the victim's simulated facing —
-  units turn at data-driven turn speeds), visual projectiles for ranged units, death pops,
-  health bars.
-- **Tech paths**: 4 constructible hub add-ons (Lysis / Flagella / Toxin / Capsule), each
-  producing a strong+cheap specialist unit and gating 2 purchasable upgrades. Upgrades are
-  per-player hashed state (`PlayerState.UpgradeLevels`) that fold a Num/Den into one integer
-  floor at the relevant hot path (damage, armor, move, attack-speed, range).
-- **Unity client**: main menu (Skirmish/Settings live; Campaign/Multiplayer/Replay stubs),
-  20 Hz fixed-tick driver with client-side game speed, pooled runtime sprites (diamonds =
-  ranged, facing arrows), full command UI. The view is a pure projection of sim state.
 
-Next up (per design doc): LOGISTICS/SUPPLY LINES (the untouched defining pillar), the
-evolution landmark tier tree, spatial partitioning for the 8k-unit target, authored
-animated sprites, then the multiplayer/replay layers the architecture already anticipates.
+Deferred (data retained, systems gated off): supply lines, tech prongs, the 8 upgrades,
+per-entity dial. `burrow-node` and `sentinel-spire` are `constructible: false` until the
+supply layer returns.
 
-## Verify (from `newgame/`)
+## Verify (from the repo root)
 
 ```
 dotnet build Petri.slnx
 dotnet test Petri.slnx
-dotnet run --project src/Petri.Runner -- determinism --seed 42 --ticks 6000
-dotnet run --project src/Petri.Runner -- run-match --seed 7 --ticks 12000
+dotnet run --project src/Petri.Runner -- determinism --seed 42 --ticks 8000
+dotnet run --project src/Petri.Runner -- run-match --seed 7 --ticks 20000
 ```
 
 All four must pass before and after any change; `determinism` must print PASS for both the
-fresh rerun and the replay.
+fresh rerun and the replay, and `run-match` must end with a winner. Balance reference:
+scripted matches decide around tick 4500 (petri-dish), 4700 (capillary), 6100 (agar-plate).
