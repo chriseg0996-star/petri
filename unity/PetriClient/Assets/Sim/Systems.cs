@@ -602,11 +602,12 @@ namespace Petri.Core
     }
 
     /// <summary>
-    /// ORGANISM HEALTH, each slow beat: ONE living value. In peacetime the body swells in
-    /// lockstep with its growing ceiling (every new cell and finished building adds its
-    /// worth to health directly) and knits a little besides. The moment ANY front is
-    /// engaged, the climb stops cold — a fighting organism cannot grow stronger, only
-    /// bleed (combat attrition, unmanned-front fire, torn-away cells). Zero = elimination.
+    /// ORGANISM HEALTH, each slow beat: ONE living value. The body swells in lockstep
+    /// with its growing ceiling — every new cell and finished building adds its worth to
+    /// health directly, war or peace, so expanding is always strengthening. The slow
+    /// regenerative knit, though, stops while ANY front is engaged: wounds taken in
+    /// combat (attrition, unmanned-front fire, torn-away cells) only close after
+    /// disengaging. Zero = elimination.
     /// </summary>
     public static class HealthSystem
     {
@@ -634,11 +635,8 @@ namespace Petri.Core
                 bool engaged = false;
                 for (int f = 0; f < pl.FrontCount && !engaged; f++)
                     engaged = w.ScratchFrontContested[p * SimConstants.MaxFronts + f];
-                if (!engaged)
-                {
-                    if (delta > 0) pl.OrganismHealth += delta;   // growth swells the body
-                    pl.OrganismHealth += w.Rules.HealthRegenPerBeat;
-                }
+                if (delta > 0) pl.OrganismHealth += delta;   // growth swells the body, war or peace
+                if (!engaged) pl.OrganismHealth += w.Rules.HealthRegenPerBeat;
                 if (pl.OrganismHealth > max) pl.OrganismHealth = max;
                 if (pl.OrganismHealth <= 0) w.Eliminate(p);
             }

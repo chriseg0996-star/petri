@@ -24,11 +24,11 @@ or by bleeding every rival organism's health to zero (losing your nucleus also k
 - **Breakthrough**: a contested front whose defenders are wiped BREAKS for 10 seconds —
   the units assigned to it have perished, and enemies flip cells through the gap at ×4
   while it reforms.
-- **Health**: ONE living value per organism. In peacetime it swells in lockstep with its
-  growing ceiling (every new cell and finished building adds its worth on the spot) and
-  knits a little besides — but the moment any front is engaged the climb stops cold, and
-  combat bleeds the body: attrition under fire even on manned fronts, scorching on
-  unmanned ones, and 3 per torn-away cell. Zero = elimination.
+- **Health**: ONE living value per organism, swelling in lockstep with its growing
+  ceiling — every new cell and finished building adds its worth on the spot, war or
+  peace, so expanding always strengthens you. The slow regenerative knit stops while any
+  front is engaged, and combat bleeds the body: attrition under fire even on manned
+  fronts, scorching on unmanned ones, and 3 per torn-away cell. Zero = elimination.
 - **Buildings**: placed from the persistent bottom panel, only inside your own territory,
   and they build themselves. A building on a contested cell soaks enemy flips (40 damage
   each) until it falls — territory lost is buildings lost.

@@ -962,10 +962,20 @@ namespace Petri.Tests
             Assert.Equal(hp0 - 1, p0.OrganismHealth);
             Assert.Equal(hp1 - 1, p1.OrganismHealth);
 
-            // Engaged: the health beat neither regenerates nor follows ceiling growth.
+            // Engaged: no regenerative knit — but the island cell each side gained in
+            // setup is ceiling GROWTH, and growth strengthens the body war or peace.
+            int grow = w.Rules.HealthPerCell;
             HealthSystem.Tick(w, sim.Defs);
-            Assert.Equal(hp0 - 1, p0.OrganismHealth);
-            Assert.Equal(hp1 - 1, p1.OrganismHealth);
+            Assert.Equal(hp0 - 1 + grow, p0.OrganismHealth);
+            Assert.Equal(hp1 - 1 + grow, p1.OrganismHealth);
+
+            // A fresh cell for p0 only: its worth lands immediately; p1, still engaged
+            // and not growing, gains nothing (the knit stays frozen for both).
+            for (int c = 0; c < w.Territory.Length; c++)
+                if (w.Territory[c] == SimWorld.NeutralOwner && !w.TerritoryBlocked[c]) { w.Territory[c] = 0; break; }
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.Equal(hp0 - 1 + 2 * grow, p0.OrganismHealth);
+            Assert.Equal(hp1 - 1 + grow, p1.OrganismHealth);
         }
 
         [Fact]
