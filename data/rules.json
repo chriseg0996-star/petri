@@ -1,5 +1,6 @@
 {
   "maxEntities": 16384, "startingFood": 5200, "startingWorkers": 6, "nodeRadiusCenti": 60,
+  "growthBeatTicks": 4, "growthBasePerBeat": 2, "growthWorkerDivisor": 3, "startRadiusCells": 3,
   "leaderAuraBonusNum": 5, "leaderAuraBonusDen": 4, "leaderAuraRadiusCenti": 600,
   "frontArcCosNum": 1, "frontArcCosDen": 2, "rearArcCosNum": 1, "rearArcCosDen": 2,
   "sideDamageNum": 5, "sideDamageDen": 4, "rearDamageNum": 3, "rearDamageDen": 2,

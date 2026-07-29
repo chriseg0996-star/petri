@@ -33,6 +33,7 @@ namespace Petri.Core
                 _cursor++;
             }
             ProductionSystem.Tick(World, Defs);
+            if (World.TickCount % Defs.Rules.GrowthBeatTicks == 0) GrowthSystem.Tick(World, Defs);
             WorkerSystem.Tick(World, Defs);
             MovementSystem.Tick(World, Defs);
             CollisionSystem.Tick(World, Defs);
@@ -100,6 +101,9 @@ namespace Petri.Core
             Mix((ulong)w.RejectedCommands);
             Mix((ulong)w.MapWidth.Raw);
             Mix((ulong)w.MapHeight.Raw);
+
+            // The territory map IS the game state: every cell, index order.
+            for (int c = 0; c < w.Territory.Length; c++) Mix(w.Territory[c]);
 
             for (int p = 0; p < w.Players.Length; p++)
             {
@@ -190,6 +194,45 @@ namespace Petri.Core
             {
                 w.WallPos[k] = w.ClampToMap(new FixVec2(Fix.Ratio(map.Walls[k].XCenti, 100), Fix.Ratio(map.Walls[k].YCenti, 100)));
                 w.WallRadius[k] = Fix.Ratio(map.Walls[k].RadiusCenti, 100);
+            }
+
+            // ---- TERRITORY grid: 2u cells; blocked where a wall covers the cell center.
+            w.TerritoryCellsX = System.Math.Max(1, map.WidthCenti / SimWorld.CellCenti);
+            w.TerritoryCellsY = System.Math.Max(1, map.HeightCenti / SimWorld.CellCenti);
+            int cells = w.TerritoryCellsX * w.TerritoryCellsY;
+            w.Territory = new byte[cells];
+            w.TerritoryBlocked = new bool[cells];
+            for (int c = 0; c < cells; c++)
+            {
+                w.Territory[c] = SimWorld.NeutralOwner;
+                w.CellCenterCenti(c, out int ccx, out int ccy);
+                for (int k = 0; k < map.Walls.Length; k++)
+                {
+                    long dx = ccx - map.Walls[k].XCenti, dy = ccy - map.Walls[k].YCenti;
+                    long r = map.Walls[k].RadiusCenti;
+                    if (dx * dx + dy * dy <= r * r) { w.TerritoryBlocked[c] = true; break; }
+                }
+                if (!w.TerritoryBlocked[c]) w.OwnableCellCount++;
+            }
+
+            // Each organism starts as a small blob around its spawn (nucleus) cell.
+            for (byte p = 0; p < playerCount; p++)
+            {
+                int spawnCell = w.CellOfCenti(map.Spawns[p].XCenti, map.Spawns[p].YCenti);
+                int scx = spawnCell % w.TerritoryCellsX, scy = spawnCell / w.TerritoryCellsX;
+                int r0 = defs.Rules.StartRadiusCells;
+                for (int cy = scy - r0; cy <= scy + r0; cy++)
+                {
+                    if (cy < 0 || cy >= w.TerritoryCellsY) continue;
+                    for (int cx = scx - r0; cx <= scx + r0; cx++)
+                    {
+                        if (cx < 0 || cx >= w.TerritoryCellsX) continue;
+                        if ((cx - scx) * (cx - scx) + (cy - scy) * (cy - scy) > r0 * r0) continue;
+                        int c = cy * w.TerritoryCellsX + cx;
+                        if (!w.TerritoryBlocked[c] && w.Territory[c] == SimWorld.NeutralOwner)
+                            w.Territory[c] = p;
+                    }
+                }
             }
 
             for (byte p = 0; p < playerCount; p++)

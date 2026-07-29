@@ -94,6 +94,51 @@ namespace Petri.Core
     }
 
     /// <summary>
+    /// TERRITORY GROWTH: on each growth beat every living organism claims neutral, ownable
+    /// cells 4-adjacent to its territory, spending a budget that scales with its workers.
+    /// The scan starts at a rotating offset (derived from TickCount only) so expansion is
+    /// roughly isotropic instead of biased toward low cell indices. Deterministic: index
+    /// order within a wrap-around scan, integer math only.
+    /// </summary>
+    public static class GrowthSystem
+    {
+        public static void Tick(SimWorld w, DefDatabase defs)
+        {
+            int cells = w.CellCount;
+            if (cells == 0) return;
+            int cx0 = w.TerritoryCellsX;
+            // Rotating start offset: prime multiplier spreads successive beats around the map.
+            int start = (int)(((long)(w.TickCount / w.Rules.GrowthBeatTicks) * 7919) % cells);
+
+            for (byte p = 0; p < w.Players.Length; p++)
+            {
+                if (!w.Players[p].Alive) continue;
+                // INTERIM (until the unit cutover): workers are still entities — count them.
+                int workers = 0;
+                for (int i = 0; i < w.HighWater; i++)
+                    if (w.Kind[i] == EntityKind.Unit && w.Owner[i] == p && defs.Units[w.DefIndex[i]].IsWorker)
+                        workers++;
+                int budget = w.Rules.GrowthBasePerBeat + workers / w.Rules.GrowthWorkerDivisor;
+
+                for (int n = 0; n < cells && budget > 0; n++)
+                {
+                    int c = start + n;
+                    if (c >= cells) c -= cells;
+                    if (w.Territory[c] != SimWorld.NeutralOwner || w.TerritoryBlocked[c]) continue;
+                    int x = c % cx0, y = c / cx0;
+                    bool adj = (x > 0 && w.Territory[c - 1] == p)
+                        || (x < cx0 - 1 && w.Territory[c + 1] == p)
+                        || (y > 0 && w.Territory[c - cx0] == p)
+                        || (y < w.TerritoryCellsY - 1 && w.Territory[c + cx0] == p);
+                    if (!adj) continue;
+                    w.Territory[c] = p;
+                    budget--;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// The leader's command aura: friendly units standing within Rules.LeaderAuraRadiusCenti
     /// of a live, same-owner leader deal Rules.LeaderAuraBonus damage. Derived per-tick
     /// scratch (like ScratchAttackBonus): recomputed from hashed positions after movement,

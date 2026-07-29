@@ -128,6 +128,36 @@ namespace Petri.Core
         public FixVec2[] WallPos = System.Array.Empty<FixVec2>();
         public Fix[] WallRadius = System.Array.Empty<Fix>();
 
+        // ---- TERRITORY: the superorganism map. One cell = 2 world units (200 centi).
+        // Territory[c] = owning player, 255 = neutral — HASHED per cell (the game state IS
+        // the territory). TerritoryBlocked derives from walls at setup: static, unhashed
+        // (map data, covered by DefsHash); blocked cells can never be owned.
+        public const int CellCenti = 200;
+        public byte[] Territory = System.Array.Empty<byte>();
+        public bool[] TerritoryBlocked = System.Array.Empty<bool>();
+        public int TerritoryCellsX, TerritoryCellsY;
+        public int OwnableCellCount;
+
+        public int CellCount => TerritoryCellsX * TerritoryCellsY;
+
+        public int CellOfCenti(int xCenti, int yCenti)
+        {
+            int cx = xCenti / CellCenti, cy = yCenti / CellCenti;
+            if (cx < 0) cx = 0; else if (cx >= TerritoryCellsX) cx = TerritoryCellsX - 1;
+            if (cy < 0) cy = 0; else if (cy >= TerritoryCellsY) cy = TerritoryCellsY - 1;
+            return cy * TerritoryCellsX + cx;
+        }
+
+        public int CellOfPos(FixVec2 p) =>
+            CellOfCenti((int)((long)p.X.Raw * 100 / Fix.OneRaw), (int)((long)p.Y.Raw * 100 / Fix.OneRaw));
+
+        public void CellCenterCenti(int c, out int xCenti, out int yCenti)
+        {
+            int cx = c % TerritoryCellsX, cy = c / TerritoryCellsX;
+            xCenti = cx * CellCenti + CellCenti / 2;
+            yCenti = cy * CellCenti + CellCenti / 2;
+        }
+
         public int Capacity => Kind.Length;
 
         public SimWorld(Rules rules, int playerCount, int unitDefCount, int upgradeCount, Fix mapWidth, Fix mapHeight, ulong seed)

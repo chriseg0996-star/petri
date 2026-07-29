@@ -1799,6 +1799,73 @@ namespace Petri.Tests
         }
     }
 
+    /// <summary>The superorganism territory grid: seeded start blobs, deterministic
+    /// beat-driven growth, wall-blocked cells, and hash coverage.</summary>
+    public class TerritoryTests
+    {
+        private static int OwnedCount(SimWorld w, byte p)
+        {
+            int n = 0;
+            for (int c = 0; c < w.Territory.Length; c++) if (w.Territory[c] == p) n++;
+            return n;
+        }
+
+        [Fact]
+        public void StartingBlobsAreSeededAndDisjoint()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            Assert.True(w.Territory.Length > 0);
+            int p0 = OwnedCount(w, 0), p1 = OwnedCount(w, 1);
+            // Both organisms start with a blob (sizes can differ slightly at map edges,
+            // where the disc clips against the boundary).
+            Assert.True(p0 > 5 && p1 > 5, $"both organisms start with territory (p0={p0}, p1={p1})");
+            // The nucleus (spawn) cell belongs to its player.
+            int hq = WorkerSystem.FindHq(w, sim.Defs, 0);
+            Assert.Equal(0, w.Territory[w.CellOfPos(w.Pos[hq])]);
+        }
+
+        [Fact]
+        public void GrowthClaimsAdjacentNeutralCellsDeterministically()
+        {
+            var a = TestWorlds.NewSim(42, new CommandLog());
+            var b = TestWorlds.NewSim(42, new CommandLog());
+            int before = OwnedCount(a.World, 0);
+            for (int t = 0; t < 40; t++) { a.Tick(); b.Tick(); }
+            Assert.True(OwnedCount(a.World, 0) > before, "organism should grow");
+            Assert.Equal(a.World.Territory, b.World.Territory); // bit-identical growth
+            for (int c = 0; c < a.World.Territory.Length; c++)
+                Assert.False(a.World.TerritoryBlocked[c] && a.World.Territory[c] != SimWorld.NeutralOwner,
+                    "blocked cells must never be owned");
+        }
+
+        [Fact]
+        public void WallsBlockCellsFromOwnership()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            // Statically block a plate of cells (as a map wall would) and grow a long time:
+            // ownership must never appear there.
+            int c0 = w.CellOfCenti(2000, 2000);
+            w.TerritoryBlocked[c0] = true;
+            if (w.Territory[c0] != SimWorld.NeutralOwner) w.Territory[c0] = SimWorld.NeutralOwner;
+            for (int t = 0; t < 400; t++) sim.Tick();
+            Assert.Equal(SimWorld.NeutralOwner, w.Territory[c0]);
+        }
+
+        [Fact]
+        public void TerritoryIsHashedState()
+        {
+            var a = TestWorlds.NewSim(42, new CommandLog());
+            var b = TestWorlds.NewSim(42, new CommandLog());
+            for (int t = 0; t < 600; t++) { a.Tick(); b.Tick(); }
+            Assert.Equal(a.StateHash(), b.StateHash());
+            // Flip one cell to a DIFFERENT owner: the fingerprint must diverge.
+            b.World.Territory[0] = b.World.Territory[0] == 0 ? (byte)1 : (byte)0;
+            Assert.NotEqual(a.StateHash(), b.StateHash());
+        }
+    }
+
     /// <summary>Immovable terrain walls: map-defined circles that units cannot cross and
     /// buildings cannot stand on — chokepoints without a pathfinder.</summary>
     public class TerrainTests

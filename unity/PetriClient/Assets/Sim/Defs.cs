@@ -22,6 +22,12 @@ namespace Petri.Core
         public int StartingFood = 200;
         public int StartingWorkers = 6;
         public int NodeRadiusCenti = 60;
+        // TERRITORY: the superorganism game. Growth runs on a beat; each beat every organism
+        // claims adjacent neutral cells from a budget that scales with its worker count.
+        public int GrowthBeatTicks = 4;
+        public int GrowthBasePerBeat = 2;
+        public int GrowthWorkerDivisor = 3;
+        public int StartRadiusCells = 3;   // starting blob radius around the spawn cell
         // The leader's command aura: friendly units within the radius of a live same-owner
         // leader deal Num/Den damage (5/4 = +25%). The bonus does not stack.
         public int LeaderAuraBonusNum = 5;

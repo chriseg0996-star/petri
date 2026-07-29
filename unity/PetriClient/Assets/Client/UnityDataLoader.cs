@@ -19,6 +19,7 @@ namespace Petri.Client
         [Serializable] private class RulesDto
         {
             public int maxEntities, startingFood, startingWorkers, nodeRadiusCenti;
+            public int growthBeatTicks, growthBasePerBeat, growthWorkerDivisor, startRadiusCells;
             public int leaderAuraBonusNum, leaderAuraBonusDen, leaderAuraRadiusCenti;
             public int frontArcCosNum, frontArcCosDen, rearArcCosNum, rearArcCosDen;
             public int sideDamageNum, sideDamageDen, rearDamageNum, rearDamageDen;
@@ -134,6 +135,10 @@ namespace Petri.Client
             StartingFood = d.startingFood,
             StartingWorkers = d.startingWorkers,
             NodeRadiusCenti = d.nodeRadiusCenti > 0 ? d.nodeRadiusCenti : 60,
+            GrowthBeatTicks = d.growthBeatTicks > 0 ? d.growthBeatTicks : 4,
+            GrowthBasePerBeat = d.growthBasePerBeat > 0 ? d.growthBasePerBeat : 2,
+            GrowthWorkerDivisor = d.growthWorkerDivisor > 0 ? d.growthWorkerDivisor : 3,
+            StartRadiusCells = d.startRadiusCells > 0 ? d.startRadiusCells : 3,
             LeaderAuraBonusNum = d.leaderAuraBonusNum > 0 ? d.leaderAuraBonusNum : 5,
             LeaderAuraBonusDen = d.leaderAuraBonusDen > 0 ? d.leaderAuraBonusDen : 4,
             LeaderAuraRadiusCenti = d.leaderAuraRadiusCenti > 0 ? d.leaderAuraRadiusCenti : 600,
