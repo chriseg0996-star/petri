@@ -71,7 +71,12 @@ namespace Petri.Client
         private SpriteRenderer _terrRenderer;
         private Color32[] _terrPixels;
         private float _terrNext;
+        private int _terrScale = 4; // texture pixels per territory cell edge
         private const float TerritoryInterval = 0.12f;
+        // Scratch for the per-pixel owner-field accumulation (at most 4 distinct owners
+        // in a 2×2 cell neighborhood).
+        private readonly byte[] _fieldOwner = new byte[4];
+        private readonly float[] _fieldStrength = new float[4];
 
         // Per-front label anchors: the mean of the human organism's border cells in each
         // sector, refreshed with the territory texture. Labels draw every frame from these.
@@ -136,20 +141,24 @@ namespace Petri.Client
                 rim.sortingOrder = 1;
             }
 
-            // The organisms themselves: a low texture where each pixel is one 2u territory
-            // cell, rendered UNDER walls and entities. Point sampling keeps every cell
-            // edge crisp — solid organisms with hard front lines, no blur.
-            _terrTex = new Texture2D(world.TerritoryCellsX, world.TerritoryCellsY, TextureFormat.RGBA32, false)
+            // The organisms themselves, rendered UNDER walls and entities. SUPERSAMPLED:
+            // several pixels per 2u cell, each classified from a bilinearly interpolated
+            // ownership field, so boundaries render as smooth curves instead of cell
+            // staircases — solid bodies, hard smooth front lines. Scale adapts so huge
+            // maps don't pay for a huge texture.
+            _terrScale = Mathf.Clamp(480 / Mathf.Max(world.TerritoryCellsX, world.TerritoryCellsY), 2, 4);
+            int tw = world.TerritoryCellsX * _terrScale, th = world.TerritoryCellsY * _terrScale;
+            _terrTex = new Texture2D(tw, th, TextureFormat.RGBA32, false)
             {
-                filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp,
             };
-            _terrPixels = new Color32[world.TerritoryCellsX * world.TerritoryCellsY];
+            _terrPixels = new Color32[tw * th];
             var terrGo = new GameObject("territory");
             terrGo.transform.SetParent(transform);
             _terrRenderer = terrGo.AddComponent<SpriteRenderer>();
             _terrRenderer.sprite = Sprite.Create(_terrTex,
-                new Rect(0, 0, world.TerritoryCellsX, world.TerritoryCellsY), Vector2.zero,
-                100f / SimWorld.CellCenti); // 1 px per cell → cell-size world units per px
+                new Rect(0, 0, tw, th), Vector2.zero,
+                _terrScale * 100f / SimWorld.CellCenti);
             _terrRenderer.transform.position = Vector3.zero;
             _terrRenderer.sortingOrder = -2;
 
@@ -434,68 +443,107 @@ namespace Petri.Client
             for (int i = overlay; i < _overlays.Count; i++) _overlays[i].enabled = false;
         }
 
-        /// <summary>Rebuild the territory overlay on a cadence: owner-tinted fill, brighter
-        /// borders, and a shimmer where a border touches an enemy (a live front). Fog-gated:
-        /// unexplored ground stays blank, explored-but-dark ground renders dimmed.</summary>
+        /// <summary>Rebuild the territory overlay on a cadence. Each texture pixel samples
+        /// the 2×2 surrounding cells' owners with bilinear weights and takes the strongest
+        /// — so the organism's outline renders as a SMOOTH curve, not a cell staircase.
+        /// Interior = pale solid owner tint; the boundary band = hard opaque border line,
+        /// glinting where it touches an enemy. Fog-gated per pixel.</summary>
         private void UpdateTerritory(SimWorld w)
         {
             if (_terrTex == null || Time.time < _terrNext) return;
             _terrNext = Time.time + TerritoryInterval;
             int cw = w.TerritoryCellsX, ch = w.TerritoryCellsY;
+            int S = _terrScale, tw = cw * S, th = ch * S;
             int players = w.Players.Length;
+            int human = MatchBootstrap.HumanPlayer;
             int selFront = _match.Input != null ? _match.Input.SelectedFront : -1;
             // Contested borders glint in BRIGHTNESS only (alpha stays hard and solid).
             float pulse01 = 0.5f + 0.5f * Mathf.Sin(Time.time * 5f);
             var clear = new Color32(0, 0, 0, 0);
+            float pxU = SimWorld.CellCenti / 100f / S; // world units per texture pixel
+
+            // ---- Cell pass: anchor the human player's front labels on border cells.
             System.Array.Clear(_frontLabelX, 0, _frontLabelX.Length);
             System.Array.Clear(_frontLabelY, 0, _frontLabelY.Length);
             System.Array.Clear(_frontLabelN, 0, _frontLabelN.Length);
-
             for (int y = 0; y < ch; y++)
             {
                 int row = y * cw;
                 for (int x = 0; x < cw; x++)
                 {
                     int c = row + x;
-                    byte o = w.Territory[c];
-                    if (o >= players) { _terrPixels[c] = clear; continue; }
-                    float wx = (x * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
-                    float wy = (y * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
-                    if (Vision != null && !Vision.ExploredAt(wx, wy)) { _terrPixels[c] = clear; continue; }
+                    if (w.Territory[c] != human) continue;
+                    bool border = (x > 0 && w.Territory[c - 1] != human)
+                        || (x < cw - 1 && w.Territory[c + 1] != human)
+                        || (y > 0 && w.Territory[c - cw] != human)
+                        || (y < ch - 1 && w.Territory[c + cw] != human);
+                    if (!border) continue;
+                    int s = w.ScratchCellSector[c];
+                    _frontLabelX[s] += (x * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    _frontLabelY[s] += (y * SimWorld.CellCenti + SimWorld.CellCenti / 2) / 100f;
+                    _frontLabelN[s]++;
+                }
+            }
 
-                    bool border = false, contested = false;
-                    if (x > 0 && Check(w, o, w.Territory[c - 1], ref contested)) border = true;
-                    if (x < cw - 1 && Check(w, o, w.Territory[c + 1], ref contested)) border = true;
-                    if (y > 0 && Check(w, o, w.Territory[c - cw], ref contested)) border = true;
-                    if (y < ch - 1 && Check(w, o, w.Territory[c + cw], ref contested)) border = true;
+            // ---- Pixel pass: smooth owner field.
+            for (int py = 0; py < th; py++)
+            {
+                float v = (py + 0.5f) / S - 0.5f;
+                int y0 = Mathf.FloorToInt(v);
+                float ty = v - y0;
+                int y1 = y0 + 1;
+                if (y0 < 0) y0 = 0;
+                if (y1 > ch - 1) y1 = ch - 1;
+                float wy = (py + 0.5f) * pxU;
+                int rowOut = py * tw;
+                int cellY = py / S;
+                for (int px = 0; px < tw; px++)
+                {
+                    float u = (px + 0.5f) / S - 0.5f;
+                    int x0 = Mathf.FloorToInt(u);
+                    float tx = u - x0;
+                    int x1 = x0 + 1;
+                    if (x0 < 0) x0 = 0;
+                    if (x1 > cw - 1) x1 = cw - 1;
 
-                    var col = OwnerColor(o);
+                    // Accumulate the 2×2 neighborhood's owners by bilinear weight.
+                    int slots = 0;
+                    Accumulate(w.Territory[y0 * cw + x0], (1f - tx) * (1f - ty), ref slots);
+                    Accumulate(w.Territory[y0 * cw + x1], tx * (1f - ty), ref slots);
+                    Accumulate(w.Territory[y1 * cw + x0], (1f - tx) * ty, ref slots);
+                    Accumulate(w.Territory[y1 * cw + x1], tx * ty, ref slots);
+                    byte winner = SimWorld.NeutralOwner;
+                    float strength = 0f;
+                    for (int k = 0; k < slots; k++)
+                        if (_fieldStrength[k] > strength) { strength = _fieldStrength[k]; winner = _fieldOwner[k]; }
+
+                    if (winner >= players || strength <= 0.5f) { _terrPixels[rowOut + px] = clear; continue; }
+                    float wx = (px + 0.5f) * pxU;
+                    if (Vision != null && !Vision.ExploredAt(wx, wy)) { _terrPixels[rowOut + px] = clear; continue; }
+
+                    bool contested = false;
+                    for (int k = 0; k < slots; k++)
+                        if (_fieldOwner[k] < players && w.AreEnemies(winner, _fieldOwner[k])) { contested = true; break; }
+
+                    var col = OwnerColor(winner);
                     float a;
-                    if (border)
+                    if (strength < 0.8f)
                     {
-                        // HARD front line: full-strength owner color, fully opaque; a live
-                        // (enemy-touching) stretch glints brighter without going soft.
+                        // The boundary band: a hard, fully opaque line tracing the smooth
+                        // outline; live (enemy-touching) stretches glint brighter.
                         if (contested) col = Color.Lerp(col, Color.white, 0.15f + 0.25f * pulse01);
                         a = 1f;
                     }
                     else
                     {
-                        // Pale, solid interior — clearly the organism's body, lighter than
-                        // its border so the front line pops.
+                        // Pale, solid interior — lighter than the border so the line pops.
                         col = Color.Lerp(col, Color.white, 0.4f);
                         a = 0.6f;
                     }
-                    if (o == MatchBootstrap.HumanPlayer)
+                    if (winner == human && selFront >= 0)
                     {
-                        if (border)
-                        {
-                            // Border cells anchor this sector's front label.
-                            int s = w.ScratchCellSector[c];
-                            _frontLabelX[s] += wx;
-                            _frontLabelY[s] += wy;
-                            _frontLabelN[s]++;
-                        }
-                        if (selFront >= 0 && w.ScratchCellSector[c] == selFront)
+                        int cell = cellY * cw + px / S;
+                        if (w.Territory[cell] == human && w.ScratchCellSector[cell] == selFront)
                         {
                             // The SELECTED front's whole wedge lifts toward white.
                             col = Color.Lerp(col, Color.white, 0.5f);
@@ -503,19 +551,23 @@ namespace Petri.Client
                         }
                     }
                     if (Vision != null && !Vision.VisibleAt(wx, wy)) a *= 0.6f; // remembered, not seen
-                    _terrPixels[c] = new Color32((byte)(col.r * 255f), (byte)(col.g * 255f),
+                    _terrPixels[rowOut + px] = new Color32((byte)(col.r * 255f), (byte)(col.g * 255f),
                         (byte)(col.b * 255f), (byte)(a * 255f));
                 }
             }
             _terrTex.SetPixels32(_terrPixels);
             _terrTex.Apply(false);
+        }
 
-            static bool Check(SimWorld w, byte owner, byte other, ref bool contested)
-            {
-                if (other == owner) return false;
-                if (other < w.Players.Length && w.AreEnemies(owner, other)) contested = true;
-                return true;
-            }
+        /// <summary>Add one cell sample's weight to its owner's slot (≤4 distinct owners
+        /// in a 2×2 neighborhood; blocked cells are neutral by invariant).</summary>
+        private void Accumulate(byte owner, float weight, ref int slots)
+        {
+            for (int k = 0; k < slots; k++)
+                if (_fieldOwner[k] == owner) { _fieldStrength[k] += weight; return; }
+            _fieldOwner[slots] = owner;
+            _fieldStrength[slots] = weight;
+            slots++;
         }
 
         /// <summary>Front number labels on the border plus push-target rings, drawn from the
