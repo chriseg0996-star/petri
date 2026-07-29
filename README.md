@@ -54,9 +54,11 @@ One codebase, two runtimes: the deterministic sim source lives under the Unity p
 2. Press **Play**. The main menu builds itself from code (`MainMenu` via
    `RuntimeInitializeOnLoadMethod`) — no scene wiring. **Skirmish** (map + seed) starts a match;
    matches end with a victory banner back to the menu.
-3. Controls: **L-click** your border to select a **front** (the wedge lifts white; labels
-   ride the border — gold = pushing, red pulse = broken) · **R-click-drag** sketch a push
-   path; release orders the push at its end · **[S]** stop the selected front's push ·
+3. Controls: **R-click** where you want to attack — the front facing the click pushes
+   there (select a front first with **L-click** on your border to steer a specific one;
+   the wedge lifts white; labels ride the border — gold = pushing, red pulse = broken) ·
+   **R-click-drag** sketches a push path; release orders the push at its end ·
+   **[S]** stop the selected front's push ·
    **L-click** buildings/nodes to inspect · with a producer selected, **R-click** a sector
    to rally its output there, **[R]** back to auto · build from the persistent bottom
    panel (ghost green = legal, own territory only) · **▲/▼** split/merge fronts ·

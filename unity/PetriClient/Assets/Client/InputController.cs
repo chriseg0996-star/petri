@@ -104,11 +104,18 @@ namespace Petri.Client
                         _match.View.Ping(WorldAt(Input.mousePosition), GameView.RallyPing);
                     }
                 }
-                else if (SelectedFront >= 0)
+                else
                 {
-                    RightDragging = true;
-                    RightPathScreen.Clear();
-                    RightPathScreen.Add(Input.mousePosition);
+                    // The attack reflex: right-click pushes. No front selected? The click
+                    // itself picks the front facing that direction. A plain click orders
+                    // the push at the click point; holding sketches a path instead.
+                    if (SelectedFront < 0) SelectedFront = FrontAt(WorldAt(Input.mousePosition));
+                    if (SelectedFront >= 0)
+                    {
+                        RightDragging = true;
+                        RightPathScreen.Clear();
+                        RightPathScreen.Add(Input.mousePosition);
+                    }
                 }
             }
 

@@ -354,9 +354,9 @@ namespace Petri.Client
             if (_match.Input != null && _match.Input.PlacingBuilding >= 0)
                 hint = $"<b>Placing {PrettyName(_match.Defs.Buildings[_match.Input.PlacingBuilding].Id)}</b> — left-click to place (own territory only) · right-click / Esc to cancel";
             else if (_match.Input != null && _match.Input.SelectedFront >= 0)
-                hint = $"<b>Front {_match.Input.SelectedFront + 1} selected</b> — right-click-drag a path to PUSH it · [S] stop · Esc deselect";
+                hint = $"<b>Front {_match.Input.SelectedFront + 1} selected</b> — R-click (or drag a path) to PUSH it there · [S] stop · Esc deselect";
             else
-                hint = "L-click your border to select a FRONT · L-click buildings/nodes to inspect · R-click with a producer selected to rally it · win at 75% of the dish";
+                hint = "R-click where you want to ATTACK — the front facing the click pushes there · L-click border selects a front · producer selected? R-click rallies it · win at 75%";
             GUI.Label(new Rect(12, Screen.height - 24, 1800, 22), hint, _small);
         }
 
