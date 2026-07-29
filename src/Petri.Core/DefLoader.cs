@@ -115,6 +115,22 @@ namespace Petri.Core
                 KillBountyNum = GetInt(r, "killBountyNum", 1),
                 KillBountyDen = GetInt(r, "killBountyDen", 10),
                 EvoPerKill = GetInt(r, "evoPerKill", 1),
+                CombatExchangeDivisor = GetInt(r, "combatExchangeDivisor", 4),
+                HoldHpDivisor = GetInt(r, "holdHpDivisor", 8),
+                PushNum = GetInt(r, "pushNum", 3),
+                PushDen = GetInt(r, "pushDen", 2),
+                FlipAdvantageDivisor = GetInt(r, "flipAdvantageDivisor", 40),
+                FlipCapPerBeat = GetInt(r, "flipCapPerBeat", 2),
+                BreakthroughTicks = GetInt(r, "breakthroughTicks", 200),
+                BreakthroughFlipMult = GetInt(r, "breakthroughFlipMult", 4),
+                OverflowDamageDivisor = GetInt(r, "overflowDamageDivisor", 10),
+                CellLossHealth = GetInt(r, "cellLossHealth", 3),
+                BuildingFlipDamage = GetInt(r, "buildingFlipDamage", 40),
+                HealthBase = GetInt(r, "healthBase", 1000),
+                HealthPerCell = GetInt(r, "healthPerCell", 5),
+                HealthPerBuilding = GetInt(r, "healthPerBuilding", 200),
+                HealthRegenPerBeat = GetInt(r, "healthRegenPerBeat", 5),
+                TerritoryWinPercent = GetInt(r, "territoryWinPercent", 75),
             };
         }
 

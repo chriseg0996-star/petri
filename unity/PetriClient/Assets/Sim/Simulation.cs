@@ -37,10 +37,16 @@ namespace Petri.Core
                 HarvestSystem.Tick(World, Defs);
             if (World.TickCount % Defs.Rules.GrowthBeatTicks == 0)
             {
-                // Geometry first: growth's push pass and (later) combat read the sectors.
+                // Geometry first: growth's push pass and combat both read the sectors.
                 FrontSystem.TickGeometry(World, Defs);
                 GrowthSystem.Tick(World, Defs);
                 FrontSystem.TickForces(World, Defs);
+                FrontSystem.TickCombat(World, Defs);
+            }
+            if (World.TickCount % Defs.Rules.SlowBeatTicks == 0)
+            {
+                HealthSystem.Tick(World, Defs);
+                VictorySystem.Tick(World, Defs);
             }
             CleanupSystem.Tick(World, Defs);
             World.TickCount++;
@@ -224,7 +230,6 @@ namespace Petri.Core
                 player.Food = defs.Rules.StartingFood;
                 player.Minerals = defs.Rules.StartingMinerals;
                 player.WorkerCount = defs.Rules.StartingWorkers;
-                player.OrganismHealth = 1000; // provisional; HealthSystem derives the real max
                 for (int k = 0; k < defs.Units.Length; k++) player.ProductionWeights[k] = 1;
 
                 var spawn = new FixVec2(Fix.Ratio(map.Spawns[p].XCenti, 100), Fix.Ratio(map.Spawns[p].YCenti, 100));
@@ -247,6 +252,10 @@ namespace Petri.Core
                 int e = w.Spawn(EntityKind.Node, 0, SimWorld.NeutralOwner, pos, 1);
                 if (e >= 0) { w.NodeFood[e] = node.Food; w.NodeMineral[e] = node.Mineral; }
             }
+
+            // Organisms hatch at full health for their starting size.
+            for (byte p = 0; p < playerCount; p++)
+                w.Players[p].OrganismHealth = HealthSystem.MaxOf(w, defs, p);
 
             return w;
         }

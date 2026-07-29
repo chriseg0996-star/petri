@@ -27,6 +27,11 @@ namespace Petri.Client
             public int startingMinerals;
             public int killBountyNum, killBountyDen;
             public int evoPerKill;
+            public int combatExchangeDivisor, holdHpDivisor, pushNum, pushDen;
+            public int flipAdvantageDivisor, flipCapPerBeat, breakthroughTicks, breakthroughFlipMult;
+            public int overflowDamageDivisor, cellLossHealth, buildingFlipDamage;
+            public int healthBase, healthPerCell, healthPerBuilding, healthRegenPerBeat;
+            public int territoryWinPercent;
         }
 
         [Serializable] private class UnitDto
@@ -148,6 +153,22 @@ namespace Petri.Client
             KillBountyNum = d.killBountyNum > 0 ? d.killBountyNum : 1,
             KillBountyDen = d.killBountyDen > 0 ? d.killBountyDen : 10,
             EvoPerKill = d.evoPerKill > 0 ? d.evoPerKill : 1,
+            CombatExchangeDivisor = d.combatExchangeDivisor > 0 ? d.combatExchangeDivisor : 4,
+            HoldHpDivisor = d.holdHpDivisor > 0 ? d.holdHpDivisor : 8,
+            PushNum = d.pushNum > 0 ? d.pushNum : 3,
+            PushDen = d.pushDen > 0 ? d.pushDen : 2,
+            FlipAdvantageDivisor = d.flipAdvantageDivisor > 0 ? d.flipAdvantageDivisor : 40,
+            FlipCapPerBeat = d.flipCapPerBeat > 0 ? d.flipCapPerBeat : 2,
+            BreakthroughTicks = d.breakthroughTicks > 0 ? d.breakthroughTicks : 200,
+            BreakthroughFlipMult = d.breakthroughFlipMult > 0 ? d.breakthroughFlipMult : 4,
+            OverflowDamageDivisor = d.overflowDamageDivisor > 0 ? d.overflowDamageDivisor : 10,
+            CellLossHealth = d.cellLossHealth > 0 ? d.cellLossHealth : 3,
+            BuildingFlipDamage = d.buildingFlipDamage > 0 ? d.buildingFlipDamage : 40,
+            HealthBase = d.healthBase > 0 ? d.healthBase : 1000,
+            HealthPerCell = d.healthPerCell > 0 ? d.healthPerCell : 5,
+            HealthPerBuilding = d.healthPerBuilding > 0 ? d.healthPerBuilding : 200,
+            HealthRegenPerBeat = d.healthRegenPerBeat > 0 ? d.healthRegenPerBeat : 5,
+            TerritoryWinPercent = d.territoryWinPercent > 0 ? d.territoryWinPercent : 75,
         };
 
         private static UnitDef ToUnit(UnitDto d) => new UnitDef

@@ -73,6 +73,14 @@ namespace Petri.Core
         public readonly long[] ScratchCentSumX, ScratchCentSumY; // per-player centroid accumulation
         public readonly int[] ScratchCentCount;
         public readonly int[] ScratchCentXCenti, ScratchCentYCenti; // per-player centroid (centi)
+        // FRONT COMBAT scratch, rebuilt each combat beat. Contacts are the distinct enemy
+        // fronts a front touches, packed (enemyPlayer << 8) | enemyFront, capped per front.
+        public const int ContactCap = 16;
+        public readonly short[] ScratchContact;       // [player * MaxFronts * ContactCap]
+        public readonly byte[] ScratchContactCount;   // [player * MaxFronts]
+        public readonly int[] ScratchFrontMelee;      // frozen pre-beat stats [player * MaxFronts]
+        public readonly int[] ScratchFrontRanged;
+        public readonly int[] ScratchFrontHold;
 
         // Immovable terrain from the map (walls/rocks). Static for the whole match and
         // identical on every peer (map data, covered by DefsHash) — deliberately NOT hashed
@@ -142,6 +150,11 @@ namespace Petri.Core
             ScratchCentCount = new int[playerCount];
             ScratchCentXCenti = new int[playerCount];
             ScratchCentYCenti = new int[playerCount];
+            ScratchContact = new short[playerCount * SimConstants.MaxFronts * ContactCap];
+            ScratchContactCount = new byte[playerCount * SimConstants.MaxFronts];
+            ScratchFrontMelee = new int[playerCount * SimConstants.MaxFronts];
+            ScratchFrontRanged = new int[playerCount * SimConstants.MaxFronts];
+            ScratchFrontHold = new int[playerCount * SimConstants.MaxFronts];
 
             Players = new PlayerState[playerCount];
             for (int p = 0; p < playerCount; p++)

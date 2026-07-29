@@ -332,8 +332,330 @@ namespace Petri.Core
             }
         }
 
+        /// <summary>
+        /// FRONT COMBAT, each growth beat: (1) breakthrough windows tick down; (2) contacts —
+        /// the distinct enemy fronts each front touches — build from one ascending cell scan;
+        /// (3) per-front stats FREEZE from the force block (role triangle: melee attack =
+        /// push power, ranged attack = defensive fire, HP = hold) plus finished buildings;
+        /// (4) fronts in contact EXCHANGE fire in (player, front, entry) order — damage pools
+        /// per defending front and kills consume it cheapest unit first, paying the killer
+        /// evo + bounty; a front whose defenders all perish while contested BREAKS open;
+        /// (5) PUSHING fronts convert their push-vs-hold advantage into cell flips, nearest
+        /// the push target first — buildings soak flips, broken defenders multiply them.
+        /// </summary>
+        public static void TickCombat(SimWorld w, DefDatabase defs)
+        {
+            int cells = w.CellCount;
+            if (cells == 0) return;
+            int cx0 = w.TerritoryCellsX;
+            int players = w.Players.Length;
+            int u = w.UnitDefCount;
+            const int MF = SimConstants.MaxFronts;
+
+            for (int p = 0; p < players; p++)
+            {
+                var pl = w.Players[p];
+                for (int f = 0; f < MF; f++)
+                {
+                    pl.FrontBrokenTicks[f] -= w.Rules.GrowthBeatTicks;
+                    if (pl.FrontBrokenTicks[f] < 0) pl.FrontBrokenTicks[f] = 0;
+                }
+            }
+
+            // ---- CONTACTS: check east and north neighbors so each adjacent pair is seen once.
+            Array.Clear(w.ScratchContactCount, 0, w.ScratchContactCount.Length);
+            for (int c = 0; c < cells; c++)
+            {
+                if (w.Territory[c] >= players) continue;
+                int x = c % cx0, y = c / cx0;
+                if (x < cx0 - 1) MaybeContact(w, c, c + 1);
+                if (y < w.TerritoryCellsY - 1) MaybeContact(w, c, c + cx0);
+            }
+
+            // ---- FROZEN STATS (everything below reads these, nothing rewrites them).
+            for (byte p = 0; p < players; p++)
+            {
+                var pl = w.Players[p];
+                int bonus = 0;
+                for (int i = 0; i < w.HighWater; i++)
+                    if (w.Kind[i] == EntityKind.Building && w.Owner[i] == p && w.ConstructionRemaining[i] == 0)
+                        bonus += defs.Buildings[w.DefIndex[i]].AttackBonus;
+                for (int f = 0; f < MF; f++)
+                {
+                    int melee = 0, ranged = 0;
+                    long holdHp = 0;
+                    if (pl.Alive && f < pl.FrontCount)
+                    {
+                        for (int d = 0; d < u; d++)
+                        {
+                            int cnt = pl.Force[f * u + d];
+                            if (cnt == 0) continue;
+                            var ud = defs.Units[d];
+                            holdHp += (long)cnt * ud.MaxHp;
+                            if (ud.AttackDamage <= 0) continue;
+                            int dmg = cnt * (ud.AttackDamage + bonus);
+                            if (ud.ProjectileSpeedCenti > 0) ranged += dmg; else melee += dmg;
+                        }
+                    }
+                    w.ScratchFrontMelee[p * MF + f] = melee;
+                    w.ScratchFrontRanged[p * MF + f] = ranged;
+                    w.ScratchFrontHold[p * MF + f] = (int)(holdHp / w.Rules.HoldHpDivisor);
+                }
+                if (!pl.Alive) continue;
+                // Armed buildings garrison their own sector: defensive fire plus hold.
+                for (int i = 0; i < w.HighWater; i++)
+                {
+                    if (w.Kind[i] != EntityKind.Building || w.Owner[i] != p || w.ConstructionRemaining[i] > 0) continue;
+                    int ad = defs.Buildings[w.DefIndex[i]].AttackDamage;
+                    if (ad <= 0) continue;
+                    int px = (int)((long)w.Pos[i].X.Raw * 100 / Fix.OneRaw);
+                    int py = (int)((long)w.Pos[i].Y.Raw * 100 / Fix.OneRaw);
+                    int s = FrontMath.Sector(pl.FrontCount, px - w.ScratchCentXCenti[p], py - w.ScratchCentYCenti[p]);
+                    w.ScratchFrontRanged[p * MF + s] += ad;
+                    w.ScratchFrontHold[p * MF + s] += ad;
+                }
+            }
+
+            // ---- EXCHANGE.
+            for (byte p = 0; p < players; p++)
+            {
+                var pl = w.Players[p];
+                if (!pl.Alive) continue;
+                for (int f = 0; f < pl.FrontCount; f++)
+                {
+                    int nc = w.ScratchContactCount[p * MF + f];
+                    if (nc == 0) continue;
+                    int output = (w.ScratchFrontMelee[p * MF + f] + w.ScratchFrontRanged[p * MF + f])
+                        / w.Rules.CombatExchangeDivisor;
+                    if (output <= 0) continue;
+                    int share = output / nc, rem = output % nc;
+                    for (int e = 0; e < nc; e++)
+                    {
+                        int packed = w.ScratchContact[(p * MF + f) * SimWorld.ContactCap + e];
+                        byte q = (byte)(packed >> 8);
+                        int g = packed & 0xFF;
+                        int dmg = share + (e == 0 ? rem : 0);
+                        if (dmg <= 0) continue;
+                        var foe = w.Players[q];
+                        if (!foe.Alive) continue;
+                        int foeTotal = 0;
+                        for (int d = 0; d < u; d++) foeTotal += foe.Force[g * u + d];
+                        if (foeTotal == 0)
+                        {
+                            // Nothing mans this stretch: the fire scorches the organism itself.
+                            int hpLoss = dmg / w.Rules.OverflowDamageDivisor;
+                            foe.OrganismHealth -= hpLoss < 1 ? 1 : hpLoss;
+                            continue;
+                        }
+                        foe.FrontDamage[g] += dmg;
+                        for (int d = 0; d < u && foe.FrontDamage[g] > 0; d++)
+                        {
+                            var ud = defs.Units[d];
+                            if (ud.MaxHp <= 0) continue;
+                            while (foe.Force[g * u + d] > 0 && foe.FrontDamage[g] >= ud.MaxHp)
+                            {
+                                foe.FrontDamage[g] -= ud.MaxHp;
+                                foe.Force[g * u + d]--;
+                                foeTotal--;
+                                pl.EvoPoints += w.Rules.EvoPerKill;
+                                pl.Food += ud.FoodCost * w.Rules.KillBountyNum / w.Rules.KillBountyDen;
+                            }
+                        }
+                        if (foeTotal == 0 && w.ScratchFrontContested[q * MF + g] && foe.FrontBrokenTicks[g] == 0)
+                        {
+                            // BREAKTHROUGH: this front's defenders just perished. The line is
+                            // open for a while; residual damage dissipates with the dead.
+                            foe.FrontBrokenTicks[g] = w.Rules.BreakthroughTicks;
+                            foe.FrontDamage[g] = 0;
+                        }
+                    }
+                }
+            }
+
+            // ---- FLIPS: only pushing fronts take ground.
+            for (byte p = 0; p < players; p++)
+            {
+                var pl = w.Players[p];
+                if (!pl.Alive) continue;
+                for (int f = 0; f < pl.FrontCount; f++)
+                {
+                    if (pl.FrontPushX[f] < 0) continue;
+                    int nc = w.ScratchContactCount[p * MF + f];
+                    if (nc == 0) continue;
+                    int push = w.ScratchFrontMelee[p * MF + f] * w.Rules.PushNum / w.Rules.PushDen;
+                    for (int e = 0; e < nc; e++)
+                    {
+                        int packed = w.ScratchContact[(p * MF + f) * SimWorld.ContactCap + e];
+                        byte q = (byte)(packed >> 8);
+                        int g = packed & 0xFF;
+                        var foe = w.Players[q];
+                        if (!foe.Alive) continue;
+                        bool broken = foe.FrontBrokenTicks[g] > 0;
+                        int hold = broken ? 0 : w.ScratchFrontHold[q * MF + g];
+                        int adv = push - hold;
+                        if (adv <= 0) continue;
+                        int flips = 1 + adv / w.Rules.FlipAdvantageDivisor;
+                        if (flips > w.Rules.FlipCapPerBeat) flips = w.Rules.FlipCapPerBeat;
+                        if (broken) flips *= w.Rules.BreakthroughFlipMult;
+                        FlipCells(w, p, pl, f, q, g, flips);
+                    }
+                }
+            }
+        }
+
+        private const int FlipCandidateCap = 64;
+        private static readonly int[] _flipCell = new int[FlipCandidateCap];
+        private static readonly long[] _flipDist = new long[FlipCandidateCap];
+
+        /// <summary>Take up to <paramref name="flips"/> enemy cells from front g of player q,
+        /// nearest the pusher's target first. A standing building soaks a flip as damage
+        /// instead of losing the cell; every flipped cell costs the loser organism health.</summary>
+        private static void FlipCells(SimWorld w, byte p, PlayerState pl, int f, byte q, int g, int flips)
+        {
+            int cells = w.CellCount, cx0 = w.TerritoryCellsX;
+            int n = 0;
+            for (int c = 0; c < cells && n < FlipCandidateCap; c++)
+            {
+                if (w.Territory[c] != q || w.ScratchCellSector[c] != g) continue;
+                int x = c % cx0, y = c / cx0;
+                bool adj = (x > 0 && w.Territory[c - 1] == p)
+                    || (x < cx0 - 1 && w.Territory[c + 1] == p)
+                    || (y > 0 && w.Territory[c - cx0] == p)
+                    || (y < w.TerritoryCellsY - 1 && w.Territory[c + cx0] == p);
+                if (!adj) continue;
+                w.CellCenterCenti(c, out int ccx, out int ccy);
+                long dx = ccx - pl.FrontPushX[f], dy = ccy - pl.FrontPushY[f];
+                _flipCell[n] = c;
+                _flipDist[n] = dx * dx + dy * dy;
+                n++;
+            }
+            for (int i = 1; i < n; i++)
+            {
+                int cc = _flipCell[i]; long dd = _flipDist[i];
+                int j = i - 1;
+                while (j >= 0 && (_flipDist[j] > dd || (_flipDist[j] == dd && _flipCell[j] > cc)))
+                {
+                    _flipCell[j + 1] = _flipCell[j];
+                    _flipDist[j + 1] = _flipDist[j];
+                    j--;
+                }
+                _flipCell[j + 1] = cc; _flipDist[j + 1] = dd;
+            }
+            var foe = w.Players[q];
+            for (int i = 0; i < n && flips > 0; )
+            {
+                int c = _flipCell[i];
+                int shield = BuildingOnCell(w, c);
+                if (shield >= 0)
+                {
+                    // A standing building holds the cell: this beat's remaining flips keep
+                    // pounding it (no advance) until it falls; Cleanup despawns it at 0.
+                    w.Hp[shield] -= w.Rules.BuildingFlipDamage;
+                    flips--;
+                    continue;
+                }
+                w.Territory[c] = p;
+                foe.OrganismHealth -= w.Rules.CellLossHealth;
+                flips--;
+                i++;
+            }
+        }
+
+        private static int BuildingOnCell(SimWorld w, int cell)
+        {
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Building && w.Hp[i] > 0 && w.CellOfPos(w.Pos[i]) == cell)
+                    return i;
+            return -1;
+        }
+
+        private static void MaybeContact(SimWorld w, int c1, int c2)
+        {
+            byte a = w.Territory[c1], b = w.Territory[c2];
+            if (a >= w.Players.Length || b >= w.Players.Length || !w.AreEnemies(a, b)) return;
+            AddContact(w, a, w.ScratchCellSector[c1], b, w.ScratchCellSector[c2]);
+            AddContact(w, b, w.ScratchCellSector[c2], a, w.ScratchCellSector[c1]);
+        }
+
+        private static void AddContact(SimWorld w, byte p, int f, byte q, int g)
+        {
+            int slot = p * SimConstants.MaxFronts + f;
+            int baseIx = slot * SimWorld.ContactCap;
+            int n = w.ScratchContactCount[slot];
+            short packed = (short)((q << 8) | g);
+            for (int e = 0; e < n; e++)
+                if (w.ScratchContact[baseIx + e] == packed) return;
+            if (n >= SimWorld.ContactCap) return; // cap reached: extra distinct pairs fold away
+            w.ScratchContact[baseIx + n] = packed;
+            w.ScratchContactCount[slot] = (byte)(n + 1);
+        }
+
         private static bool IsEnemyCell(SimWorld w, byte owner, byte other) =>
             other < w.Players.Length && w.AreEnemies(owner, other);
+    }
+
+    /// <summary>
+    /// ORGANISM HEALTH, each slow beat: the pool's ceiling grows with territory and finished
+    /// buildings, it regenerates slowly toward that ceiling, and an organism bled to zero
+    /// (overflow fire on empty fronts, cells torn away) is eliminated.
+    /// </summary>
+    public static class HealthSystem
+    {
+        public static int MaxOf(SimWorld w, DefDatabase defs, byte p)
+        {
+            int cells = 0;
+            for (int c = 0; c < w.Territory.Length; c++) if (w.Territory[c] == p) cells++;
+            int buildings = 0;
+            for (int i = 0; i < w.HighWater; i++)
+                if (w.Kind[i] == EntityKind.Building && w.Owner[i] == p && w.ConstructionRemaining[i] == 0)
+                    buildings++;
+            return w.Rules.HealthBase + w.Rules.HealthPerCell * cells + w.Rules.HealthPerBuilding * buildings;
+        }
+
+        public static void Tick(SimWorld w, DefDatabase defs)
+        {
+            for (byte p = 0; p < w.Players.Length; p++)
+            {
+                var pl = w.Players[p];
+                if (!pl.Alive) continue;
+                int max = MaxOf(w, defs, p);
+                pl.OrganismHealth += w.Rules.HealthRegenPerBeat;
+                if (pl.OrganismHealth > max) pl.OrganismHealth = max;
+                if (pl.OrganismHealth <= 0) w.Eliminate(p);
+            }
+        }
+    }
+
+    /// <summary>
+    /// TERRITORY VICTORY, each slow beat: the first team (ascending player order) holding
+    /// the winning share of the ownable cells eliminates everyone else — AliveTeams and the
+    /// client's banner then report the win through the existing path.
+    /// </summary>
+    public static class VictorySystem
+    {
+        public static void Tick(SimWorld w, DefDatabase defs)
+        {
+            if (w.OwnableCellCount == 0) return;
+            for (int p = 0; p < w.Players.Length; p++)
+            {
+                var pl = w.Players[p];
+                if (!pl.Alive) continue;
+                bool firstOfTeam = true;
+                for (int q = 0; q < p; q++)
+                    if (w.Players[q].Alive && w.Players[q].Team == pl.Team) { firstOfTeam = false; break; }
+                if (!firstOfTeam) continue;
+                long teamCells = 0;
+                for (int c = 0; c < w.Territory.Length; c++)
+                {
+                    byte o = w.Territory[c];
+                    if (o < w.Players.Length && w.Players[o].Alive && w.Players[o].Team == pl.Team) teamCells++;
+                }
+                if (teamCells * 100 < (long)w.OwnableCellCount * w.Rules.TerritoryWinPercent) continue;
+                for (byte q = 0; q < w.Players.Length; q++)
+                    if (w.Players[q].Alive && w.Players[q].Team != pl.Team) w.Eliminate(q);
+                return;
+            }
+        }
     }
 
     /// <summary>Dead buildings despawn; a dead nucleus (headquarters) eliminates its owner

@@ -46,6 +46,29 @@ namespace Petri.Core
         // KILL BOUNTY: front kills bank this fraction of the victim's nutrient cost.
         public int KillBountyNum = 1;
         public int KillBountyDen = 10;
+        // FRONT COMBAT (role triangle: melee = push power, ranged = defensive fire,
+        // HP = hold/soak, moveSpeed = redeploy rate). All applied per growth beat.
+        public int CombatExchangeDivisor = 4;  // damage out = (Melee+Ranged)/this
+        // Hold = Σ count×MaxHp / this. Calibrated so the baseline soldier's push
+        // (attack×PushNum/PushDen) equals its hold (hp/this): equal armies STALEMATE,
+        // and tanky-vs-hitty stat spreads tilt defense vs offense from there.
+        public int HoldHpDivisor = 8;
+        public int PushNum = 3;                // Push = Melee×Num/Den while the front pushes
+        public int PushDen = 2;
+        public int FlipAdvantageDivisor = 40;  // flips = 1 + (Push−Hold)/this
+        public int FlipCapPerBeat = 2;
+        public int BreakthroughTicks = 200;    // easy-flip window after a front breaks
+        public int BreakthroughFlipMult = 4;   // flips multiply while the victim is broken
+        public int OverflowDamageDivisor = 10; // empty-front damage → organism hp, /this (min 1)
+        public int CellLossHealth = 3;         // organism hp lost per cell flipped away
+        public int BuildingFlipDamage = 40;    // a building on a flip cell soaks this instead
+        // ORGANISM HEALTH: grows with territory and structures, regenerates slowly.
+        public int HealthBase = 1000;
+        public int HealthPerCell = 5;
+        public int HealthPerBuilding = 200;    // finished buildings only
+        public int HealthRegenPerBeat = 5;     // per slow beat, clamped to the max
+        // VICTORY: control this share of the ownable cells and the dish is yours.
+        public int TerritoryWinPercent = 75;
         // EVOLUTIONARY POINTS: banked per enemy unit slain in front combat and by no other
         // means — the only resource you cannot gather.
         public int EvoPerKill = 1;

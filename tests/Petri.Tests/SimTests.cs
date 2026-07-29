@@ -685,6 +685,314 @@ namespace Petri.Tests
         }
     }
 
+    /// <summary>
+    /// FRONT COMBAT: two hand-painted island cells in the middle of the dish put one front
+    /// of each organism in contact, with force blocks loaded by hand. Only TickGeometry +
+    /// TickCombat run, so territory and forces stay exactly where the test put them.
+    /// </summary>
+    public class FrontCombatTests
+    {
+        private const int SoldierIx = 1, LeaderIx = 0, XmiteIx = 3;
+
+        /// <summary>Paint (9,9)→p0 and (10,9)→p1, run geometry, and return each side's
+        /// contact sector. TinyMap is 20×20 cells; cell centers are (x*200+100, y*200+100).</summary>
+        private static (Simulation sim, int s0, int s1, int cellA, int cellB) ContactWorld()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int cellA = 9 * w.TerritoryCellsX + 9, cellB = 9 * w.TerritoryCellsX + 10;
+            w.Territory[cellA] = 0;
+            w.Territory[cellB] = 1;
+            FrontSystem.TickGeometry(w, sim.Defs);
+            return (sim, w.ScratchCellSector[cellA], w.ScratchCellSector[cellB], cellA, cellB);
+        }
+
+        private static void Beat(Simulation sim)
+        {
+            FrontSystem.TickGeometry(sim.World, sim.Defs);
+            FrontSystem.TickCombat(sim.World, sim.Defs);
+        }
+
+        [Fact]
+        public void ExchangePoolsDamageAndKillsWhatThePoolCanCover()
+        {
+            var (sim, s0, s1, _, _) = ContactWorld();
+            var w = sim.World;
+            int u = w.UnitDefCount;
+            var p0 = w.Players[0];
+            var p1 = w.Players[1];
+            p0.Force[s0 * u + SoldierIx] = 10;             // out = 10×5/4 = 12 per beat
+            p1.Force[s1 * u + LeaderIx] = 1;               // 100 HP sponge, no attack
+            p1.Force[s1 * u + SoldierIx] = 1;              // 60 HP, out = 5/4 = 1 per beat
+            long foodBefore = p0.Food;
+
+            Beat(sim);
+            Assert.Equal(12, p1.FrontDamage[s1]);          // pooled, nothing dies yet
+            Assert.Equal(1, p0.FrontDamage[s0]);           // the lone soldier fires back
+            Assert.True(w.ScratchFrontContested[1 * SimConstants.MaxFronts + s1]);
+
+            // Chip damage kills the first unit the pool can COVER (dense order): at beat 5
+            // the pool hits 60 — the soldier falls, the 100 HP leader soaks on.
+            for (int b = 0; b < 4; b++) Beat(sim);
+            Assert.Equal(1, p1.Force[s1 * u + LeaderIx]);
+            Assert.Equal(0, p1.Force[s1 * u + SoldierIx]);
+            Assert.Equal(0, p1.FrontDamage[s1]);           // 60 − 60: pool spent exactly
+            Assert.Equal(sim.Defs.Rules.EvoPerKill, p0.EvoPoints);
+            Assert.Equal(foodBefore + 6, p0.Food);         // bounty: 60 food cost / 10
+
+            // Four more beats: pool 48 < 100 — the leader still stands, front unbroken.
+            for (int b = 0; b < 4; b++) Beat(sim);
+            Assert.Equal(1, p1.Force[s1 * u + LeaderIx]);
+            Assert.Equal(48, p1.FrontDamage[s1]);
+            Assert.Equal(0, p1.FrontBrokenTicks[s1]);
+        }
+
+        [Fact]
+        public void FireOnAnUnmannedFrontScorchesOrganismHealth()
+        {
+            var (sim, s0, _, _, _) = ContactWorld();
+            var w = sim.World;
+            w.Players[0].Force[s0 * w.UnitDefCount + SoldierIx] = 10;
+            int hpBefore = w.Players[1].OrganismHealth;
+
+            Beat(sim);
+            Assert.Equal(hpBefore - 1, w.Players[1].OrganismHealth); // max(1, 12/10)
+        }
+
+        [Fact]
+        public void ArmedBuildingGarrisonsItsSector()
+        {
+            var (sim, _, s1, _, cellB) = ContactWorld();
+            var w = sim.World;
+            const int MF = SimConstants.MaxFronts;
+            int rangedBefore = w.ScratchFrontRanged[1 * MF + s1];
+            // A finished turret standing on p1's island cell arms that front.
+            int turret = sim.Defs.BuildingIndex("test.turret");
+            w.CellCenterCenti(cellB, out int bx, out int by);
+            w.Spawn(EntityKind.Building, (short)turret, 1, new FixVec2(Fix.Ratio(bx, 100), Fix.Ratio(by, 100)), 300);
+
+            Beat(sim);
+            Assert.Equal(rangedBefore + 7, w.ScratchFrontRanged[1 * MF + s1]);
+            Assert.Equal(7, w.ScratchFrontHold[1 * MF + s1]); // no force: hold is the turret alone
+        }
+    }
+
+    public class BreakthroughTests
+    {
+        private const int SoldierIx = 1, XmiteIx = 3;
+
+        [Fact]
+        public void WipedContestedFrontBreaksAndBreakerTakesGroundFast()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int u = w.UnitDefCount;
+            // p0 holds one island cell; p1 holds a 3-cell corridor stretching east of it.
+            // Row 3 is level with p0's blob centroid, so the whole advance stays inside
+            // p0's EAST sector — the push order keeps applying as the frontier moves.
+            int cellA = 3 * w.TerritoryCellsX + 9;
+            int strip0 = 3 * w.TerritoryCellsX + 10;
+            int strip1 = 3 * w.TerritoryCellsX + 11;
+            int strip2 = 3 * w.TerritoryCellsX + 12;
+            w.Territory[cellA] = 0;
+            w.Territory[strip0] = 1;
+            w.Territory[strip1] = 1;
+            w.Territory[strip2] = 1;
+            FrontSystem.TickGeometry(w, sim.Defs);
+            int s0 = w.ScratchCellSector[cellA], s1 = w.ScratchCellSector[strip0];
+            var p0 = w.Players[0];
+            var p1 = w.Players[1];
+            // 32 soldiers burst 32×5/4 = 40 damage in ONE beat: exactly the xmite's 40 HP,
+            // so the defenders are wiped before any pre-break flip can sever the contact.
+            p0.Force[s0 * u + SoldierIx] = 32;
+            p1.Force[s1 * u + XmiteIx] = 1;
+            w.CellCenterCenti(strip2, out int bx, out int by);
+            p0.FrontPushX[s0] = bx;                        // the breaker IS pushing
+            p0.FrontPushY[s0] = by;
+            int hpBefore = p1.OrganismHealth;
+
+            FrontSystem.TickGeometry(w, sim.Defs);
+            FrontSystem.TickCombat(w, sim.Defs);
+            Assert.Equal(0, p1.Force[s1 * u + XmiteIx]);   // defenders perished
+            Assert.Equal(sim.Defs.Rules.BreakthroughTicks, p1.FrontBrokenTicks[s1]); // window open
+            Assert.Equal(0, p1.FrontDamage[s1]);           // residual pool died with the front
+            Assert.Equal(0, (int)w.Territory[strip0]);     // ground taken the SAME beat
+            Assert.Equal(hpBefore - sim.Defs.Rules.CellLossHealth, p1.OrganismHealth);
+
+            // The corridor is one cell wide, so the frontier advances one cell per beat —
+            // by two more beats the whole corridor has fallen through the open window.
+            for (int b = 0; b < 2; b++)
+            {
+                FrontSystem.TickGeometry(w, sim.Defs);
+                FrontSystem.TickCombat(w, sim.Defs);
+            }
+            Assert.Equal(0, (int)w.Territory[strip1]);
+            Assert.Equal(0, (int)w.Territory[strip2]);
+        }
+
+        [Fact]
+        public void NoPushMeansNoTerritoryTakenEvenWithAdvantage()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int u = w.UnitDefCount;
+            int cellA = 9 * w.TerritoryCellsX + 9, cellB = 9 * w.TerritoryCellsX + 10;
+            w.Territory[cellA] = 0;
+            w.Territory[cellB] = 1;
+            FrontSystem.TickGeometry(w, sim.Defs);
+            w.Players[0].Force[w.ScratchCellSector[cellA] * u + SoldierIx] = 10;
+
+            for (int b = 0; b < 10; b++)
+            {
+                FrontSystem.TickGeometry(w, sim.Defs);
+                FrontSystem.TickCombat(w, sim.Defs);
+            }
+            Assert.Equal(1, (int)w.Territory[cellB]); // combat rages, but nobody ordered a push
+        }
+    }
+
+    public class BuildingFlipTests
+    {
+        private const int SoldierIx = 1;
+
+        [Fact]
+        public void StandingBuildingSoaksFlipsUntilItFalls()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int u = w.UnitDefCount;
+            int cellA = 9 * w.TerritoryCellsX + 9, cellB = 9 * w.TerritoryCellsX + 10;
+            w.Territory[cellA] = 0;
+            w.Territory[cellB] = 1;
+            FrontSystem.TickGeometry(w, sim.Defs);
+            int s0 = w.ScratchCellSector[cellA];
+            var p0 = w.Players[0];
+            p0.Force[s0 * u + SoldierIx] = 10;
+            w.CellCenterCenti(cellB, out int bx, out int by);
+            p0.FrontPushX[s0] = bx;
+            p0.FrontPushY[s0] = by;
+            // A 200 HP brood-sac stands on the contested cell: 2 flips/beat × 40 dmg each.
+            int sac = sim.Defs.BuildingIndex("test.broodsac");
+            int shield = w.Spawn(EntityKind.Building, (short)sac, 1,
+                new FixVec2(Fix.Ratio(bx, 100), Fix.Ratio(by, 100)), 200);
+
+            FrontSystem.TickGeometry(w, sim.Defs);
+            FrontSystem.TickCombat(w, sim.Defs);
+            Assert.Equal(120, w.Hp[shield]);          // two flips soaked
+            Assert.Equal(1, (int)w.Territory[cellB]); // the ground held
+
+            for (int b = 0; b < 2; b++)
+            {
+                FrontSystem.TickGeometry(w, sim.Defs);
+                FrontSystem.TickCombat(w, sim.Defs);
+            }
+            Assert.True(w.Hp[shield] <= 0);           // 200 HP / 40 = 5 flips to fell it
+            Assert.Equal(0, (int)w.Territory[cellB]); // the 6th flip finally took the cell
+            CleanupSystem.Tick(w, sim.Defs);
+            Assert.Equal(EntityKind.None, w.Kind[shield]);
+        }
+    }
+
+    public class HealthTests
+    {
+        [Fact]
+        public void OrganismsHatchAtFullHealthForTheirSize()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int expected = HealthSystem.MaxOf(w, sim.Defs, 0);
+            Assert.Equal(expected, w.Players[0].OrganismHealth);
+            // The formula: base + per-cell × blob + per-building × the finished nucleus.
+            int cells = 0;
+            for (int c = 0; c < w.Territory.Length; c++) if (w.Territory[c] == 0) cells++;
+            Assert.Equal(1000 + 5 * cells + 200, expected);
+        }
+
+        [Fact]
+        public void HealthRegeneratesTowardTheGrowingMax()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            int max = HealthSystem.MaxOf(w, sim.Defs, 0);
+            w.Players[0].OrganismHealth = max - 50;
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.Equal(max - 45, w.Players[0].OrganismHealth);
+            w.Players[0].OrganismHealth = max - 2;
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.Equal(max, w.Players[0].OrganismHealth); // clamped, never over
+        }
+
+        [Fact]
+        public void BledToZeroIsElimination()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            w.Players[0].OrganismHealth = -10; // deeper than one beat of regen can save
+            HealthSystem.Tick(w, sim.Defs);
+            Assert.False(w.Players[0].Alive);
+            for (int c = 0; c < w.Territory.Length; c++) Assert.NotEqual(0, (int)w.Territory[c]);
+        }
+    }
+
+    public class VictoryTests
+    {
+        [Fact]
+        public void ThreeQuartersOfTheDishEndsTheMatch()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            var w = sim.World;
+            // Paint 80% of the (wall-free) dish for p0; p1's far-corner blob survives.
+            int target = w.OwnableCellCount * 80 / 100;
+            for (int c = 0; c < target; c++) w.Territory[c] = 0;
+            Assert.True(w.Players[1].Alive);
+
+            VictorySystem.Tick(w, sim.Defs);
+            Assert.False(w.Players[1].Alive);
+            Assert.True(w.Players[0].Alive);
+            Assert.Equal(1, sim.AliveTeams());
+            Assert.Equal(w.Players[0].Team, (byte)sim.WinningTeam());
+        }
+
+        [Fact]
+        public void BelowTheThresholdNothingHappens()
+        {
+            var sim = TestWorlds.NewSim(42, new CommandLog());
+            VictorySystem.Tick(sim.World, sim.Defs);
+            Assert.Equal(2, sim.AlivePlayers());
+        }
+    }
+
+    public class FrontCombatDeterminismTests
+    {
+        [Fact]
+        public void PushCombatMatchesAreBitIdenticalOverTwoThousandTicks()
+        {
+            ulong Run()
+            {
+                var log = new CommandLog();
+                var sim = TestWorlds.NewSim(42, log);
+                var w = sim.World;
+                int hq0 = WorldQuery.FindHq(w, sim.Defs, 0);
+                int hq1 = WorldQuery.FindHq(w, sim.Defs, 1);
+                log.Add(new Command { Tick = 0, Player = 0, Type = CommandType.SetProduceOverride, A = hq0, B = 1 });
+                log.Add(new Command { Tick = 0, Player = 1, Type = CommandType.SetProduceOverride, A = hq1, B = 1 });
+                log.Add(new Command
+                {
+                    Tick = 0, Player = 0, Type = CommandType.PushFront,
+                    A = FrontMath.Sector(4, 2800, 2800), B = 3400, C = 3400,
+                });
+                log.Add(new Command
+                {
+                    Tick = 0, Player = 1, Type = CommandType.PushFront,
+                    A = FrontMath.Sector(4, -2800, -2800), B = 600, C = 600,
+                });
+                for (int t = 0; t < 2000; t++) sim.Tick();
+                return sim.StateHash();
+            }
+            Assert.Equal(Run(), Run());
+        }
+    }
+
     /// <summary>Validates the shipped JSON dataset actually loads and is internally consistent.</summary>
     public class DataTests
     {

@@ -7,5 +7,11 @@
   "hubBuildRate": 3,
   "startingMinerals": 500,
   "killBountyNum": 1, "killBountyDen": 10,
-  "evoPerKill": 1
+  "evoPerKill": 1,
+  "combatExchangeDivisor": 4, "holdHpDivisor": 8, "pushNum": 3, "pushDen": 2,
+  "flipAdvantageDivisor": 40, "flipCapPerBeat": 2,
+  "breakthroughTicks": 200, "breakthroughFlipMult": 4,
+  "overflowDamageDivisor": 10, "cellLossHealth": 3, "buildingFlipDamage": 40,
+  "healthBase": 1000, "healthPerCell": 5, "healthPerBuilding": 200, "healthRegenPerBeat": 5,
+  "territoryWinPercent": 75
 }
